@@ -59,7 +59,8 @@ pub fn render(s: &Session) -> Value {
             p.stats
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| f.hidden.is_none())
+                // hidden filters that are switched on still shape the search, so they stay visible
+                .filter(|(_, f)| f.hidden.is_none() || !f.disabled)
                 .map(|(i, f)| {
                     let value = f.roll.as_ref().map(|r| r.value);
                     let text = match value {
@@ -111,6 +112,7 @@ pub fn render(s: &Session) -> Value {
     with_placement(
         &s.place,
         json!({
+            "epoch": s.epoch,
             "title": title,
             "subtitle": subtitle,
             "rarity": rarity_name(item),
@@ -196,8 +198,66 @@ mod tests {
             active: 0,
             ninja: Some(db),
             search: SearchState::Idle,
+            search_gen: 0,
             note: None,
         })
+    }
+
+    #[test]
+    fn filter_rows_keep_their_index_and_hide_hidden_disabled_filters() {
+        use gold_core::price_check::filters::presets::{create_presets, PresetOptions};
+        let data = GameData::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            "en",
+        )
+        .unwrap();
+        let text = "Item Class: Belts\nRarity: Rare\nGhoul Twine\nStudded Belt\n--------\nItem Level: 39\n--------\n\
+                    { Prefix Modifier \"Rotund\" (Tier: 4) \u{2014} Life }\n+86(85-99) to maximum Life\n\
+                    { Suffix Modifier \"of the Salamander\" (Tier: 7) \u{2014} Elemental, Fire, Resistance }\n+16(12-17)% to Fire Resistance\n";
+        let item = parse_clipboard(&data, text).unwrap();
+        let opts = PresetOptions {
+            league: "Covens".into(),
+            merchant_only: false,
+            currency: None,
+            collapse_listings: "api",
+            activate_stock_filter: false,
+            search_stat_range: 10.0,
+            use_en: false,
+        };
+        let presets = create_presets(&data, &item, &opts).unwrap().presets;
+        let stats = presets[0].stats.clone();
+        let v = render(&Session {
+            epoch: 7,
+            item,
+            place: Placement {
+                screen: "DP-1".into(),
+                x: 0,
+                y: 0,
+            },
+            presets,
+            active: 0,
+            ninja: None,
+            search: SearchState::Idle,
+            search_gen: 0,
+            note: None,
+        });
+
+        assert_eq!(v["epoch"], 7);
+        let rows = v["filters"].as_array().unwrap();
+        // every row's `index` points at the same filter in the full list the daemon edits
+        for row in rows {
+            let f = &stats[row["index"].as_u64().unwrap() as usize];
+            assert!(
+                f.hidden.is_none() || !f.disabled,
+                "hidden and disabled filters must not be shown"
+            );
+        }
+        let life = rows
+            .iter()
+            .find(|r| r["text"].as_str().unwrap().contains("total maximum Life"))
+            .unwrap();
+        assert_eq!(life["on"], true);
+        assert_eq!(life["editable"], true);
     }
 
     #[test]

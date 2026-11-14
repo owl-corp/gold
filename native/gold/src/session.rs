@@ -19,7 +19,7 @@ pub struct Outcome {
     pub total: u64,
     pub rows: Vec<Row>,
     pub url: String,
-    /// listings grouped by what they are priced in, for bulk searches
+    /// e.g. "in divine"; set only for bulk exchange searches
     pub heading: Option<String>,
 }
 
@@ -40,6 +40,8 @@ pub struct Session {
     pub active: usize,
     pub ninja: Option<Result<Arc<NinjaDb>, String>>,
     pub search: SearchState,
+    /// Bumped whenever the filters change or a search starts, so a late result can tell it is stale.
+    pub search_gen: u64,
     /// Why there are no filters, e.g. an item kind that is not supported yet.
     pub note: Option<String>,
 }

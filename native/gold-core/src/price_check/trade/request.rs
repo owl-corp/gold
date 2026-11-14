@@ -2,7 +2,7 @@
 //!
 //! Not ported yet: mercenary warrant groups and "not"/"one of" filter groups.
 use super::category_to_trade_id;
-use crate::data::{GameData, Stat, StatGroup, StatOrGroup};
+use crate::data::{GameData, StatOrGroup};
 use crate::price_check::filters::{ItemFilters, StatFilter, INTERNAL_TRADE_IDS};
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};
@@ -50,17 +50,8 @@ fn name_to_query(name: &str, discriminator: Option<&str>) -> Value {
     }
 }
 
-fn pseudo_stat_by_ref(data: &GameData, ref_: &str) -> Option<Stat> {
-    match data.stats.by_ref(ref_)? {
-        StatOrGroup::Group(StatGroup { stats, .. }) => stats
-            .into_iter()
-            .find(|s| s.ref_ == ref_ && s.trade.ids.contains_key("pseudo")),
-        StatOrGroup::Stat(s) => Some(s),
-    }
-}
-
 fn pseudo_id(data: &GameData, ref_: &str) -> Result<String> {
-    pseudo_stat_by_ref(data, ref_)
+    crate::price_check::filters::pseudo::pseudo_stat(data, ref_)
         .and_then(|s| s.trade.ids.get("pseudo").and_then(|ids| ids.first().cloned()))
         .ok_or_else(|| anyhow!("missing pseudo stat {ref_}"))
 }
@@ -415,7 +406,8 @@ pub fn create_trade_request(data: &GameData, filters: &ItemFilters, stats: &[Sta
     if let Some(influences) = &filters.influences {
         for influence in influences {
             let ref_ = format!("Has {:?} Influence", influence.value);
-            let stat = pseudo_stat_by_ref(data, &ref_).ok_or_else(|| anyhow!("missing pseudo stat {ref_}"))?;
+            let stat = crate::price_check::filters::pseudo::pseudo_stat(data, &ref_)
+                .ok_or_else(|| anyhow!("missing pseudo stat {ref_}"))?;
             real.push(bare_filter(
                 influence.disabled,
                 stat.trade.ids.get("pseudo").cloned().unwrap_or_default(),

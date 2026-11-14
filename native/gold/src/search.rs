@@ -122,13 +122,24 @@ fn bulk_outcome(search: &BulkSearch, league: &str) -> Outcome {
 }
 
 fn url_part(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "-_.~".contains(c) {
-                c.to_string()
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                char::from(b).to_string()
             } else {
-                format!("%{:02X}", c as u32)
+                format!("%{b:02X}")
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::url_part;
+
+    #[test]
+    fn percent_encodes_utf8_bytes() {
+        assert_eq!(url_part("Hardcore Covens"), "Hardcore%20Covens");
+        assert_eq!(url_part("標"), "%E6%A8%99");
+    }
 }

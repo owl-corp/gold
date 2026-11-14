@@ -228,20 +228,21 @@ pub fn auto_currency(value: f64, xchg_rate: Option<f64>) -> CurrencyValue {
     }
 }
 
-/// `autoCurrency` for a range.
-pub fn auto_currency_range(min: f64, max: f64, xchg_rate: Option<f64>) -> CurrencyValue {
-    let rate = xchg_rate.unwrap_or(9999.0);
-    if max > rate {
-        return CurrencyValue {
-            min: min / rate,
-            max: max / rate,
-            currency: Currency::Div,
-        };
+/// JavaScript's `toFixed(1)` for |v| < 10: the exact decimal value, rounded half away from
+/// zero. Rust's `{:.1}` rounds exact halves to even (1.25 gives 1.2, JavaScript 1.3).
+fn to_fixed_1(v: f64) -> String {
+    let exact = format!("{:.60}", v.abs());
+    let (int, frac) = exact.split_once('.').unwrap_or((&exact, "0"));
+    let digits = frac.as_bytes();
+    let mut tenths = int.parse::<u64>().unwrap_or(0) * 10 + u64::from(digits[0] - b'0');
+    if digits[1] >= b'5' {
+        tenths += 1;
     }
-    CurrencyValue {
-        min,
-        max,
-        currency: Currency::Chaos,
+    let out = format!("{}.{}", tenths / 10, tenths % 10);
+    if v < 0.0 && tenths != 0 {
+        format!("-{out}")
+    } else {
+        out
     }
 }
 
@@ -255,7 +256,7 @@ pub fn display_rounding(value: f64, fraction: bool) -> String {
         return if r == "1\u{200A}/\u{200A}1" { "1".into() } else { r };
     }
     if value.abs() < 10.0 {
-        let rounded = format!("{value:.1}");
+        let rounded = to_fixed_1(value);
         let trimmed = rounded.strip_suffix(".0").unwrap_or(&rounded);
         return trimmed.replace('.', "\u{200A}.\u{200A}");
     }
@@ -314,6 +315,14 @@ mod tests {
         let m = db.find("UNIQUE", "Mageblood", Some("4 Flasks, Heavy Belt")).unwrap();
         assert!(m.url.ends_with("/unique-accessories/mageblood-4-flasks-heavy-belt"));
         assert!(db.find("UNIQUE", "Mageblood", None).is_none());
+    }
+
+    #[test]
+    fn rounds_halves_like_javascript() {
+        assert_eq!(display_rounding(1.25, false), "1\u{200A}.\u{200A}3");
+        assert_eq!(display_rounding(0.25, false), "0\u{200A}.\u{200A}3");
+        assert_eq!(display_rounding(-0.04, false), "0");
+        assert_eq!(display_rounding(8.75, false), "8\u{200A}.\u{200A}8");
     }
 
     #[test]

@@ -10,6 +10,8 @@ Scope {
     id: root
 
     property var view: null
+    // epoch of the view the user last closed; a late view for it must not reopen the panel
+    property var closedEpoch: null
     readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/gold/ui.sock"
 
     function rarityColor(rarity) {
@@ -27,13 +29,17 @@ Scope {
     }
 
     function send(action) {
+        // actions say which view they were clicked in, so a stale click is ignored
+        action.epoch = root.view?.epoch;
         sock.write(JSON.stringify(action) + "\n");
         sock.flush();
     }
 
     function close() {
+        root.closedEpoch = root.view?.epoch ?? null;
         root.view = null;
-        send({ type: "closed" });
+        sock.write(JSON.stringify({ type: "closed" }) + "\n");
+        sock.flush();
     }
 
     // number from a text field, or null when empty/invalid
@@ -62,7 +68,9 @@ Scope {
         parser: SplitParser {
             onRead: line => {
                 const msg = JSON.parse(line);
-                if (msg.type === "show") root.view = msg.view;
+                if (msg.type === "show") {
+                    if (msg.view.epoch === undefined || msg.view.epoch !== root.closedEpoch) root.view = msg.view;
+                }
                 else if (msg.type === "hide") root.view = null;
             }
         }
@@ -240,6 +248,8 @@ Scope {
                                         onEditingFinished: {
                                             const other = box.modelData === "min" ? "max" : "min";
                                             const edited = root.parseNumber(text);
+                                            // focus loss also ends editing: nothing changed, nothing to send
+                                            if (edited === (row.modelData[box.modelData] ?? null)) return;
                                             const current = row.modelData[other];
                                             root.send({
                                                 type: "set",
@@ -285,7 +295,11 @@ Scope {
                                 anchors.fill: parent
                                 enabled: root.view?.trade?.state !== "loading"
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.send({ type: "search" })
+                                onClicked: {
+                                    // take focus off a box being edited, so its value is sent first
+                                    panel.forceActiveFocus();
+                                    root.send({ type: "search" });
+                                }
                             }
                         }
                         StyledText {

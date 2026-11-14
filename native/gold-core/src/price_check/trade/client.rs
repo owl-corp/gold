@@ -1,5 +1,6 @@
 //! Search and fetch on the trade site.
 use super::limits::{prevent_queue_creation, Rules};
+use super::Account;
 use anyhow::{anyhow, bail, Result};
 use serde::Deserialize;
 use serde_json::Value;
@@ -23,21 +24,6 @@ pub struct SearchResult {
 struct ApiError {
     code: i64,
     message: String,
-}
-
-#[derive(Deserialize)]
-struct Account {
-    name: String,
-    #[serde(rename = "lastCharacterName", default)]
-    last_character_name: String,
-    #[serde(default)]
-    online: Option<AccountOnline>,
-}
-
-#[derive(Deserialize)]
-struct AccountOnline {
-    #[serde(default)]
-    status: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -77,16 +63,12 @@ struct FetchedItem {
     note: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize)]
 struct FetchResult {
     id: String,
-    item: FetchedItemRaw,
-    listing: ListingRaw,
+    item: FetchedItem,
+    listing: Listing,
 }
-
-// `FetchResult` is cached as raw JSON, so keep the parsed shapes private and re-derive them.
-type FetchedItemRaw = Value;
-type ListingRaw = Value;
 
 /// One listing, as the overlay shows it.
 #[derive(Clone, Debug)]
@@ -160,56 +142,20 @@ impl TradeClient {
         rules.adjust(&limits.join(","), &states.join(","), self.latency);
     }
 
-    /// Runs a search and returns the ids of the cheapest listings.
-    pub async fn search(&self, body: &Value, league: &str) -> Result<SearchResult> {
-        let key = format!("search:{league}:{body}");
-        if let Some(hit) = self.cached(&key) {
-            return Ok(serde_json::from_value(hit)?);
-        }
-
-        prevent_queue_creation(&[(&self.search, 1), (&self.fetch, 1)])?;
-        self.search.wait().await;
-
-        let mut url = reqwest::Url::parse(TRADE_HOST)?;
-        url.path_segments_mut()
-            .map_err(|_| anyhow!("bad url"))?
-            .extend(["api", "trade", "search", league]);
-        let response = self
-            .http
-            .post(url)
-            .header("Accept", "application/json")
-            .json(body)
-            .send()
-            .await?;
-        self.adjust(&self.search, response.headers());
-
-        let status = response.status();
-        let data: Value = response
-            .json()
-            .await
-            .map_err(|e| anyhow!("trade search failed (HTTP {status}): {e}"))?;
-        if let Some(err) = data.get("error").filter(|e| !e.is_null()) {
-            let err: ApiError = serde_json::from_value(err.clone())?;
-            bail!("{} (code {})", err.message, err.code);
-        }
-        self.remember(key, data.clone());
-        Ok(serde_json::from_value(data)?)
-    }
-
-    /// Runs a bulk exchange search (the "Bulk Item Exchange" of the trade site).
-    pub async fn exchange(&self, body: &Value, league: &str) -> Result<Value> {
-        let key = format!("exchange:{league}:{body}");
+    /// POSTs a search body to `api/trade/<kind>/<league>`, with caching, rate limits and
+    /// the API's error reply turned into an error. The caller checks the queue first.
+    async fn post(&self, kind: &str, rules: &Rules, league: &str, body: &Value) -> Result<Value> {
+        let key = format!("{kind}:{league}:{body}");
         if let Some(hit) = self.cached(&key) {
             return Ok(hit);
         }
 
-        prevent_queue_creation(&[(&self.exchange, 1)])?;
-        self.exchange.wait().await;
+        rules.wait().await;
 
         let mut url = reqwest::Url::parse(TRADE_HOST)?;
         url.path_segments_mut()
             .map_err(|_| anyhow!("bad url"))?
-            .extend(["api", "trade", "exchange", league]);
+            .extend(["api", "trade", kind, league]);
         let response = self
             .http
             .post(url)
@@ -217,19 +163,34 @@ impl TradeClient {
             .json(body)
             .send()
             .await?;
-        self.adjust(&self.exchange, response.headers());
+        self.adjust(rules, response.headers());
 
         let status = response.status();
         let data: Value = response
             .json()
             .await
-            .map_err(|e| anyhow!("trade exchange failed (HTTP {status}): {e}"))?;
-        if let Some(err) = data.get("error").filter(|e| !e.is_null()) {
-            let err: ApiError = serde_json::from_value(err.clone())?;
-            bail!("{} (code {})", err.message, err.code);
-        }
+            .map_err(|e| anyhow!("trade {kind} failed (HTTP {status}): {e}"))?;
+        check_api_error(&data)?;
         self.remember(key, data.clone());
         Ok(data)
+    }
+
+    /// Runs a search and returns the ids of the cheapest listings.
+    pub async fn search(&self, body: &Value, league: &str) -> Result<SearchResult> {
+        if self.cached(&format!("search:{league}:{body}")).is_none() {
+            prevent_queue_creation(&[(&self.search, 1), (&self.fetch, 1)])?;
+        }
+        Ok(serde_json::from_value(
+            self.post("search", &self.search, league, body).await?,
+        )?)
+    }
+
+    /// Runs a bulk exchange search (the "Bulk Item Exchange" of the trade site).
+    pub async fn exchange(&self, body: &Value, league: &str) -> Result<Value> {
+        if self.cached(&format!("exchange:{league}:{body}")).is_none() {
+            prevent_queue_creation(&[(&self.exchange, 1)])?;
+        }
+        self.post("exchange", &self.exchange, league, body).await
     }
 
     /// Fetches the listings behind up to 10 result ids.
@@ -249,10 +210,7 @@ impl TradeClient {
                     .json()
                     .await
                     .map_err(|e| anyhow!("trade fetch failed (HTTP {status}): {e}"))?;
-                if let Some(err) = data.get("error").filter(|e| !e.is_null()) {
-                    let err: ApiError = serde_json::from_value(err.clone())?;
-                    bail!("{} (code {})", err.message, err.code);
-                }
+                check_api_error(&data)?;
                 let results: Vec<Value> = data["result"]
                     .as_array()
                     .cloned()
@@ -265,18 +223,25 @@ impl TradeClient {
             }
         };
 
-        raw.into_iter()
-            .map(|r| {
-                let result: FetchResult = serde_json::from_value(r)?;
-                to_pricing_result(result, my_account)
-            })
-            .collect()
+        // one odd listing must not fail the whole page
+        Ok(raw
+            .into_iter()
+            .filter_map(|r| to_pricing_result(serde_json::from_value(r).ok()?, my_account).ok())
+            .collect())
     }
 }
 
+/// The API answers errors with `{"error": {"code": .., "message": ..}}`.
+fn check_api_error(data: &Value) -> Result<()> {
+    if let Some(err) = data.get("error").filter(|e| !e.is_null()) {
+        let err: ApiError = serde_json::from_value(err.clone())?;
+        bail!("{} (code {})", err.message, err.code);
+    }
+    Ok(())
+}
+
 fn to_pricing_result(result: FetchResult, my_account: Option<&str>) -> Result<PricingResult> {
-    let item: FetchedItem = serde_json::from_value(result.item)?;
-    let listing: Listing = serde_json::from_value(result.listing)?;
+    let FetchResult { id, item, listing } = result;
 
     let prop = |ty: i64| {
         item.properties
@@ -289,15 +254,11 @@ fn to_pricing_result(result: FetchResult, my_account: Option<&str>) -> Result<Pr
     let status = if listing.fee.is_some() {
         "online"
     } else {
-        match &listing.account.online {
-            Some(o) if o.status.as_deref() == Some("afk") => "afk",
-            Some(_) => "online",
-            None => "offline",
-        }
+        listing.account.status()
     };
 
     Ok(PricingResult {
-        id: result.id,
+        id,
         item_level: prop(78).or_else(|| Some(item.ilvl.map(|v| v.to_string()).unwrap_or_else(|| "undefined".into()))),
         stack_size: item.stack_size,
         corrupted: item.corrupted,
@@ -328,23 +289,18 @@ pub fn relative_date(iso: &str) -> String {
 }
 
 fn relative_from_seconds(secs: i64) -> String {
-    const UNITS: [(&str, i64); 6] = [
+    const UNITS: [(&str, i64); 5] = [
         ("yr.", 365 * 86400),
         ("mo.", 30 * 86400),
         ("day", 86400),
         ("hr.", 3600),
         ("min.", 60),
-        ("sec.", 1),
     ];
     let secs = secs.max(0);
-    for (name, len) in UNITS {
-        if secs >= len || name == "sec." {
-            let n = secs / len;
-            let name = if name == "day" && n != 1 { "days" } else { name };
-            return format!("{n} {name} ago");
-        }
-    }
-    unreachable!()
+    let (name, len) = UNITS.into_iter().find(|&(_, len)| secs >= len).unwrap_or(("sec.", 1));
+    let n = secs / len;
+    let name = if name == "day" && n != 1 { "days" } else { name };
+    format!("{n} {name} ago")
 }
 
 #[cfg(test)]

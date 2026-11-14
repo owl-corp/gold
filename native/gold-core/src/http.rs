@@ -1,6 +1,7 @@
 //! The HTTP client shared by every request to GGG and poe.ninja.
 use anyhow::Result;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub use reqwest::Client;
 
@@ -17,5 +18,12 @@ pub fn client(contact: &str, poesessid: Option<&str>) -> Result<Client> {
             &site,
         );
     }
-    Ok(Client::builder().user_agent(agent).cookie_provider(jar).build()?)
+    // reqwest has no timeouts by default; without them a server that accepts the
+    // connection but never answers would stall every price check
+    Ok(Client::builder()
+        .user_agent(agent)
+        .cookie_provider(jar)
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(20))
+        .build()?)
 }

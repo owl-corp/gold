@@ -19,7 +19,10 @@ fn wl_command(program: &str) -> Command {
             .flatten()
             .flatten()
             .map(|e| e.file_name())
-            .filter(|n| n.to_str().is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock")))
+            .filter(|n| {
+                n.to_str()
+                    .is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock"))
+            })
             .min();
         if let Some(socket) = socket {
             cmd.env("WAYLAND_DISPLAY", socket);
@@ -32,8 +35,9 @@ use tokio::sync::Mutex;
 const POLL_DELAY: Duration = Duration::from_millis(48);
 const POLL_LIMIT: Duration = Duration::from_millis(500);
 
-/// Only one copy at a time; a second bind press while polling is ignored.
-static BUSY: Mutex<()> = Mutex::const_new(());
+/// Held while the clipboard and the game's keys are in use, by a copy or a chat command.
+/// A second press while one runs is rejected, and two flows never interleave key presses.
+pub static BUSY: Mutex<()> = Mutex::const_new(());
 
 fn is_item(text: &str) -> bool {
     text.starts_with("Item Class: ")
@@ -98,23 +102,25 @@ pub async fn copy_item() -> Result<String> {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     write(&format!("__GOLD_FORCE_EMPTY_{stamp}")).await?;
 
-    hypr::send_combo("Control_L", "c").await?;
+    let sent = hypr::send_combo("Control_L", "c").await;
 
     let mut found = None;
-    let mut waited = Duration::ZERO;
-    while waited < POLL_LIMIT {
-        tokio::time::sleep(POLL_DELAY).await;
-        waited += POLL_DELAY;
-        if let Some(text) = read().await.filter(|t| is_item(t)) {
-            found = Some(text);
-            break;
+    if sent.is_ok() {
+        let mut waited = Duration::ZERO;
+        while waited < POLL_LIMIT {
+            tokio::time::sleep(POLL_DELAY).await;
+            waited += POLL_DELAY;
+            if let Some(text) = read().await.filter(|t| is_item(t)) {
+                found = Some(text);
+                break;
+            }
         }
     }
 
-    match &before {
-        Some(text) => write(text).await?,
-        None => clear().await?,
-    }
+    // always put the user's clipboard back, even when the key press failed, and don't
+    // let a failed restore throw away an item that was read
+    restore(before).await;
+    sent?;
 
     let Some(text) = found else {
         bail!("no item text found; is an item under the cursor?");
@@ -123,7 +129,7 @@ pub async fn copy_item() -> Result<String> {
     Ok(text)
 }
 
-/// Every copied item goes to a log; it becomes the parser's test corpus.
+/// Every copied item is appended to a log, so real items can be added to the test corpus later.
 fn log_item(text: &str) {
     let dir = match (std::env::var("XDG_STATE_HOME"), std::env::var("HOME")) {
         (Ok(s), _) => std::path::PathBuf::from(s),

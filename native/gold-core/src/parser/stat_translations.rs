@@ -212,7 +212,6 @@ fn stat_placeholder_combinations(stat: &str) -> Vec<Combination> {
     }
 
     // fallback to exact stat text, without any placeholders
-    // N # -> max 0 #
     out.push(Combination {
         stat: stat.to_string(),
         values: vec![],

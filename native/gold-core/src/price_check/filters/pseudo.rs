@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 pub const BASE_PCTL_AFFECTED_IDS: [&str; 4] = ["item.armour", "item.evasion_rating", "item.energy_shield", "item.ward"];
 
 /// `pseudoStatByRef`
-fn pseudo_stat_by_ref(data: &GameData, ref_: &str) -> Option<Stat> {
+pub fn pseudo_stat(data: &GameData, ref_: &str) -> Option<Stat> {
     match data.stats.by_ref(ref_)? {
         StatOrGroup::Group(StatGroup { stats, .. }) => stats
             .into_iter()
@@ -478,7 +478,7 @@ pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
         }
 
         let pseudo =
-            pseudo_stat_by_ref(ctx.data, rule.pseudo).ok_or_else(|| anyhow!("missing pseudo stat {}", rule.pseudo))?;
+            pseudo_stat(ctx.data, rule.pseudo).ok_or_else(|| anyhow!("missing pseudo stat {}", rule.pseudo))?;
         let mut filter = calculated_stat_to_filter(
             ctx.data,
             &StatCalculated {
@@ -1004,9 +1004,4 @@ pub fn prop_to_filter_in_range(ctx: &Ctx, range: f64, opts: PropFilter) -> Resul
     filter.tag = FilterTag::PROPERTY;
     filter.sources = opts.sources;
     Ok(filter)
-}
-
-/// `pseudoStatByRef`
-pub fn pseudo_stat(data: &GameData, ref_: &str) -> Option<Stat> {
-    pseudo_stat_by_ref(data, ref_)
 }

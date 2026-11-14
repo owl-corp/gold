@@ -31,7 +31,13 @@ impl Config {
             return Config::default();
         };
         let config: Config = toml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("{}: {e}", path.display());
+            // toml errors quote the offending line, which may hold the session id
+            eprintln!(
+                "{}: invalid config ({})",
+                path.display(),
+                e.span()
+                    .map_or("unknown position".into(), |s| format!("bytes {}-{}", s.start, s.end))
+            );
             Config::default()
         });
         if config.poesessid.is_some() && is_readable_by_others(&path) {

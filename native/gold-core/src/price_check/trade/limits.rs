@@ -128,9 +128,9 @@ impl Rules {
             )
             .filter_map(|(rule, state)| {
                 let mut p = rule.split(':');
-                let max = p.next()?.parse().ok()?;
+                let max: u32 = p.next()?.parse().ok().filter(|m| *m > 0)?;
                 let window: f64 = p.next()?.parse().ok()?;
-                Some((max, Duration::from_secs_f64(window) + latency, state))
+                Some((max, Duration::try_from_secs_f64(window).ok()? + latency, state))
             })
             .collect();
 

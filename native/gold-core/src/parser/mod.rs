@@ -165,7 +165,8 @@ fn parse_clipboard_inner(d: &GameData, clipboard: &str) -> Result<ParsedItem> {
             Section(f) => {
                 let mut i = 0;
                 while i < sections.len() {
-                    // workaround
+                    // Workaround: eldritch influence lines are appended to whichever section comes last,
+                    // so strip them before any parser looks at the section.
                     parse_eldritch_item(d, &mut sections[i]);
 
                     match f(d, &sections[i], &mut item)? {
@@ -350,7 +351,7 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
         _ => return Err(UnknownItem.into()),
     };
     if infos[0].unique.is_some() {
-        // the missing base type is looked up as the text "undefined"
+        // a missing base type or name becomes the text "undefined" in the lookup string; kept so the same items fail the same way
         let base_name = item.base_type.as_deref().unwrap_or("undefined");
         let base_types = d.items.by_translated("ITEM", base_name);
         let Some(base_ref) = find_info(&base_types).map(|b| b.ref_name.clone()) else {
@@ -383,15 +384,6 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// `makeIdentifiedUnique`
-pub fn make_identified_unique(d: &GameData, unique_info: BaseType, unidentified: &ParsedItem) -> Result<ParsedItem> {
-    let mut new_item = unidentified.clone();
-    new_item.unique_base = Some(unidentified.info.clone());
-    new_item.info = unique_info;
-    calc_disenchant_dust(d, &mut new_item)?;
-    Ok(new_item)
 }
 
 fn parse_map_tier(d: &GameData, item: &mut ParsedItem) -> Result<()> {
@@ -453,7 +445,7 @@ fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<
             item.map_more_div_cards = Some(js::parse_int(v));
             result = Parsed;
         } else if line.starts_with(&cs.MAP_AREA) {
-            // the area name is read from the first line of the section
+            // the area name is read from the section's first line, not the matching line
             let area_name = s0(section)?.get(cs.MAP_AREA.len()..).unwrap_or("");
             let area = d
                 .items
@@ -1520,7 +1512,7 @@ fn augment_modifiers(_: &GameData, item: &mut ParsedItem) -> Result<()> {
     Ok(())
 }
 
-/// Deprecated, but the price check still reads `statsByType`.
+/// Deprecated, but the filters and price lookups still read `stats_by_type`.
 fn transform_to_legacy_modifiers(_: &GameData, item: &mut ParsedItem) -> Result<()> {
     item.stats_by_type = sum_stats_by_mod_type(&item.new_mods);
     Ok(())

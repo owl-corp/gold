@@ -1,7 +1,7 @@
 //! Stat filters: one per modifier of the item.
 //!
-//! Not ported yet: the special rules for mercenary warrants, Atzoatl, mirrored tablets and
-//! timeless jewels.
+//! Not ported: special rules for mercenary warrants, Atzoatl, mirrored tablets and timeless
+//! jewels (searching for these reports "not supported").
 use super::pseudo::{
     filter_base_percentile, filter_equipment_props, filter_memory_strands, filter_pseudo, BASE_PCTL_AFFECTED_IDS,
 };
@@ -12,9 +12,7 @@ use crate::data::GameData;
 use crate::parser::calc_q20::{get_prop_quality, QUALITY_CHANGING_ENCHANT};
 use crate::parser::item::{ItemRarity, ParsedItem};
 use crate::parser::meta::{is, is_jewellery, known, ItemCategory};
-use crate::parser::modifiers::{
-    stat_sources_total, translate_stat_with_roll, ModifierType, StatCalculated, StatRoll, SumMode,
-};
+use crate::parser::modifiers::{stat_sources_total, translate_stat_with_roll, ModifierType, StatCalculated, SumMode};
 use anyhow::Result;
 
 pub struct Ctx<'a> {
@@ -691,9 +689,7 @@ fn apply_anointment_rules(filters: &mut [StatFilter], item: &ParsedItem) {
     }
 }
 
-// TODO
-// +1 Prefix Modifier allowed
-// -1 Suffix Modifier allowed
+// TODO: also offer "+1 prefix allowed" and "-1 suffix allowed".
 fn show_has_empty_modifier(item: &ParsedItem) -> Option<f64> {
     if item.rarity != Some(ItemRarity::Rare) || item.is_corrupted || item.is_mirrored == Some(true) {
         return None;
@@ -760,9 +756,4 @@ fn enable_good_rolled_filters(filters: &mut [StatFilter], above_pct: f64) {
             Some(_) => {}
         }
     }
-}
-
-/// Used by the item property filters: a roll with only a value and bounds.
-pub fn stat_roll(value: f64, min: f64, max: f64) -> StatRoll {
-    StatRoll { value, min, max }
 }

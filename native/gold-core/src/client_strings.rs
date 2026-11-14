@@ -217,7 +217,7 @@ impl Scanner<'_> {
     }
 
     fn regex(&mut self) -> Result<Regex> {
-        self.i += 1; // opening slash
+        self.i += 1;
         let start = self.i;
         let mut in_class = false;
         loop {

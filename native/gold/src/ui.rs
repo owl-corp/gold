@@ -31,9 +31,16 @@ impl Ui {
                     let (r, mut w) = stream.into_split();
                     let mut rx = ui.out.subscribe();
                     let writer = tokio::spawn(async move {
-                        while let Ok(msg) = rx.recv().await {
-                            if w.write_all(format!("{msg}\n").as_bytes()).await.is_err() {
-                                break;
+                        loop {
+                            match rx.recv().await {
+                                Ok(msg) => {
+                                    if w.write_all(format!("{msg}\n").as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                // a slow client skips ahead; every view is complete, so the latest wins
+                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Closed) => break,
                             }
                         }
                     });

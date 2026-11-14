@@ -6,6 +6,34 @@ pub mod limits;
 pub mod request;
 
 use crate::parser::meta::ItemCategory;
+use serde::Deserialize;
+
+/// The seller, as the trade API reports them.
+#[derive(Deserialize)]
+pub(super) struct Account {
+    pub name: String,
+    #[serde(rename = "lastCharacterName", default)]
+    pub last_character_name: String,
+    #[serde(default)]
+    online: Option<Online>,
+}
+
+#[derive(Deserialize)]
+struct Online {
+    #[serde(default)]
+    status: Option<String>,
+}
+
+impl Account {
+    /// "online", "afk" or "offline"
+    pub fn status(&self) -> &'static str {
+        match &self.online {
+            Some(o) if o.status.as_deref() == Some("afk") => "afk",
+            Some(_) => "online",
+            None => "offline",
+        }
+    }
+}
 
 /// `CATEGORY_TO_TRADE_ID`: the trade site's category option for an item category.
 pub fn category_to_trade_id(c: ItemCategory) -> Option<&'static str> {

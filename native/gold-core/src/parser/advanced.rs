@@ -217,7 +217,7 @@ pub fn parse_mod_type(lines: &[String]) -> Result<(ModifierType, Vec<String>)> {
     }
 }
 
-/// Stat values are stored as integers; this is the most common formatter.
+/// Stat values are stored as hundredths, so rolls with decimals are scaled by 2 decimal places.
 const DIV_BY_100: i32 = 2;
 
 pub fn apply_incr(info: &ModifierInfo, parsed: &ParsedStat) -> Option<ParsedStat> {

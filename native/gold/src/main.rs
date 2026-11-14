@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast;
 
 fn runtime_dir() -> PathBuf {
     let rt = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR not set");
@@ -45,6 +46,10 @@ async fn main() -> Result<()> {
 }
 
 async fn daemon() -> Result<()> {
+    // A second daemon would take over both sockets and leave the first one orphaned.
+    if UnixStream::connect(runtime_dir().join("ctl.sock")).await.is_ok() {
+        bail!("an gold daemon is already running");
+    }
     let app = Arc::new(App::new(config::Config::load())?);
     let ui = ui::Ui::start(runtime_dir().join("ui.sock"))?;
 
@@ -57,8 +62,13 @@ async fn daemon() -> Result<()> {
     let mut closed = ui.closed();
     let closing_app = app.clone();
     tokio::spawn(async move {
-        while closed.recv().await.is_ok() {
-            closing_app.next_epoch();
+        loop {
+            match closed.recv().await {
+                Ok(()) => {}
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+            flow::closed_by_overlay(&closing_app);
             if let Err(e) = hypr::focus_game().await {
                 eprintln!("focus_game: {e:#}");
             }
@@ -68,8 +78,12 @@ async fn daemon() -> Result<()> {
     let (action_app, action_ui) = (app.clone(), ui.clone());
     let mut actions = ui.actions();
     tokio::spawn(async move {
-        while let Ok(action) = actions.recv().await {
-            flow::handle_action(&action_app, &action_ui, action).await;
+        loop {
+            match actions.recv().await {
+                Ok(action) => flow::handle_action(&action_app, &action_ui, action).await,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
         }
     });
 
@@ -98,9 +112,9 @@ async fn handle(app: &Arc<App>, ui: &ui::Ui, cmd: &str) -> Result<String> {
             Ok("ok".into())
         }
         "close" => {
-            app.next_epoch();
-            ui.hide();
-            hypr::focus_game().await?;
+            if flow::close(app, ui) {
+                hypr::focus_game().await?;
+            }
             Ok("ok".into())
         }
         "status" => Ok(format!("ui clients: {}", ui.clients())),

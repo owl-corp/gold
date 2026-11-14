@@ -270,10 +270,6 @@ impl ItemDb {
         self.items.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &BaseType> {
-        self.items.iter()
-    }
-
     fn find(&self, index: &[(u32, u32)], ns: &str, name: &str, by_ref: bool) -> Option<Vec<BaseType>> {
         let start = binary_search(index, fnv1a32(&format!("{ns}::{name}")))?;
         let mut out = Vec::new();
@@ -341,10 +337,6 @@ impl StatDb {
 
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Stat> {
-        self.lines.iter().flat_map(|l| l.stats().iter())
     }
 
     /// `STAT_BY_REF_V2`

@@ -20,16 +20,36 @@ fn update<R>(app: &App, epoch: u64, f: impl FnOnce(&mut Session) -> R) -> Option
 }
 
 /// Shows the session in the overlay, unless the overlay moved on to something else.
+/// The check and the send happen under the session lock, so a close or a newer check can't
+/// slip in between and a stale view can't reach the overlay after a newer one.
 fn show(app: &App, ui: &Ui, epoch: u64) {
-    let rendered = {
-        let guard = app.session.lock().unwrap();
-        guard.as_ref().filter(|s| s.epoch == epoch).map(view::render)
-    };
-    if let Some(v) = rendered {
-        if app.is_current(epoch) {
-            ui.show(v);
-        }
+    let guard = app.session.lock().unwrap();
+    if let Some(s) = guard.as_ref().filter(|s| s.epoch == epoch && app.is_current(epoch)) {
+        ui.show(view::render(s));
     }
+}
+
+/// Shows a view that isn't part of a session, if `epoch` is still current.
+fn show_standalone(app: &App, ui: &Ui, epoch: u64, view: Value) {
+    let _guard = app.session.lock().unwrap();
+    if app.is_current(epoch) {
+        ui.show(view);
+    }
+}
+
+/// Hides the overlay and invalidates everything still in flight for it.
+/// Returns whether there was an overlay to close.
+pub fn close(app: &App, ui: &Ui) -> bool {
+    let guard = app.session.lock().unwrap();
+    app.next_epoch();
+    ui.hide();
+    guard.is_some()
+}
+
+/// The overlay closed itself (Esc): invalidate everything still in flight for it.
+pub fn closed_by_overlay(app: &App) {
+    let _guard = app.session.lock().unwrap();
+    app.next_epoch();
 }
 
 pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
@@ -39,8 +59,10 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     if hypr::active_class().await? != hypr::POE_CLASS {
         bail!("Path of Exile is not the focused window");
     }
-    let epoch = app.next_epoch();
+    // The epoch moves only once the copy worked: a copy that fails or is ignored
+    // (a second press while one runs) must not invalidate the overlay already showing.
     let text = clipboard::copy_item().await?;
+    let epoch = app.next_epoch();
 
     let cursor = hypr::cursor_pos().await?;
     let monitor = hypr::monitors().await?.into_iter().find(|m| m.focused);
@@ -56,7 +78,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
         Err(e) => {
             let mut lines = vec![e.code().to_string()];
             lines.extend(text.lines().take(12).map(String::from));
-            ui.show(view::error_view(&place, "Item not recognised", lines));
+            show_standalone(app, ui, epoch, view::error_view(&place, "Item not recognised", lines));
             return Ok(());
         }
     };
@@ -85,16 +107,24 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     };
 
     let auto = presets.get(active).is_some_and(|p| search_on_open(&item, p));
-    *app.session.lock().unwrap() = Some(Session {
-        epoch,
-        item,
-        place,
-        presets,
-        active,
-        ninja: None,
-        search: SearchState::Idle,
-        note,
-    });
+    {
+        let mut guard = app.session.lock().unwrap();
+        if !app.is_current(epoch) {
+            // closed, or replaced by a newer check, while this one was still working
+            return Ok(());
+        }
+        *guard = Some(Session {
+            epoch,
+            item,
+            place,
+            presets,
+            active,
+            ninja: None,
+            search: SearchState::Idle,
+            search_gen: 0,
+            note,
+        });
+    }
     show(app, ui, epoch);
 
     let (a, u) = (app.clone(), ui.clone());
@@ -130,19 +160,26 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
             return;
         };
         let Some(preset) = s.preset().cloned() else { return };
+        if matches!(s.search, SearchState::Loading) {
+            return;
+        }
         s.search = SearchState::Loading;
-        (s.item.clone(), preset)
+        s.search_gen += 1;
+        (s.item.clone(), preset, s.search_gen)
     };
     show(app, ui, epoch);
 
     let (app, ui) = (app.clone(), ui.clone());
     tokio::spawn(async move {
-        let (item, preset) = snapshot;
+        let (item, preset, generation) = snapshot;
         let result = search::run(&app, &item, &preset).await;
+        // only the latest search for the current filters may write its result
         update(&app, epoch, |s| {
-            s.search = match result {
-                Ok(groups) => SearchState::Done(groups),
-                Err(e) => SearchState::Failed(format!("{e:#}")),
+            if s.search_gen == generation {
+                s.search = match result {
+                    Ok(groups) => SearchState::Done(groups),
+                    Err(e) => SearchState::Failed(format!("{e:#}")),
+                }
             }
         });
         show(&app, &ui, epoch);
@@ -155,10 +192,11 @@ fn number(v: &Value) -> Option<f64> {
 
 /// An action from the overlay: toggle or edit a filter, switch preset, search.
 pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
-    let Some(epoch) = app.session.lock().unwrap().as_ref().map(|s| s.epoch) else {
-        return;
-    };
-    if !app.is_current(epoch) {
+    // actions carry the epoch of the view they were clicked in; a click on a view that
+    // has since been replaced must not touch the new item's filters
+    let Some(epoch) = action["epoch"].as_u64() else { return };
+    let matches_session = app.session.lock().unwrap().as_ref().is_some_and(|s| s.epoch == epoch);
+    if !matches_session || !app.is_current(epoch) {
         return;
     }
     let index = action["index"].as_u64().map(|i| i as usize);
@@ -168,6 +206,8 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
             update(app, epoch, |s| {
                 if let Some(f) = s.preset_mut().and_then(|p| index.and_then(|i| p.stats.get_mut(i))) {
                     f.disabled = !f.disabled;
+                    s.search = SearchState::Idle;
+                    s.search_gen += 1;
                 }
             });
             show(app, ui, epoch);
@@ -179,6 +219,8 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
                         roll.min = number(&action["min"]);
                         roll.max = number(&action["max"]);
                         f.disabled = false;
+                        s.search = SearchState::Idle;
+                        s.search_gen += 1;
                     }
                 }
             });
@@ -189,11 +231,55 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
                 if let Some(i) = index.filter(|i| *i < s.presets.len()) {
                     s.active = i;
                     s.search = SearchState::Idle;
+                    s.search_gen += 1;
                 }
             });
             show(app, ui, epoch);
         }
         "search" => start_search(app, ui, epoch),
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gold_core::data::GameData;
+
+    fn data() -> GameData {
+        GameData::load(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            "en",
+        )
+        .unwrap()
+    }
+
+    /// Whether the search starts by itself for this item text.
+    fn auto_searches(text: &str) -> bool {
+        let data = data();
+        let item = parse_clipboard(&data, text).unwrap();
+        let opts = PresetOptions {
+            league: "Covens".into(),
+            merchant_only: false,
+            currency: None,
+            collapse_listings: "api",
+            activate_stock_filter: false,
+            search_stat_range: 10.0,
+            use_en: false,
+        };
+        let presets = create_presets(&data, &item, &opts).unwrap();
+        let active = presets.presets.iter().find(|p| p.id == presets.active).unwrap();
+        search_on_open(&item, active)
+    }
+
+    #[test]
+    fn uniques_and_currency_search_on_open_but_rares_wait_for_the_button() {
+        let currency = "Item Class: Stackable Currency\nRarity: Currency\nDivine Orb\n--------\nStack Size: 3/10\n";
+        let unique = "Item Class: Belts\nRarity: Unique\nHeadhunter\nLeather Belt\n--------\nItem Level: 84\n";
+        let rare = "Item Class: Belts\nRarity: Rare\nGhoul Twine\nStudded Belt\n--------\nItem Level: 39\n--------\n\
+                    { Prefix Modifier \"Rotund\" (Tier: 4) \u{2014} Life }\n+86(85-99) to maximum Life\n";
+        assert!(auto_searches(currency));
+        assert!(auto_searches(unique));
+        assert!(!auto_searches(rare));
     }
 }

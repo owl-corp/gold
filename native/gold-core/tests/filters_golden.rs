@@ -156,6 +156,8 @@ fn rust_filters_match_golden() {
     }
 
     eprintln!("checked {checked} items, skipped {skipped} unsupported");
+    // an item wrongly reported as unsupported would otherwise drop out of the comparison unnoticed
+    assert_eq!(skipped, 0, "no corpus item is expected to be unsupported");
     assert!(
         failures.is_empty(),
         "{} of {checked} items differ from the golden files:\n{}",

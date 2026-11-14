@@ -1,4 +1,4 @@
-//! Price check: poe.ninja prices, and later the trade site search.
+//! Price check: poe.ninja prices, the trade site search and the filters that drive it.
 pub mod details;
 pub mod filters;
 pub mod ninja;

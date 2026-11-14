@@ -1,5 +1,6 @@
 //! Bulk item exchange for currency and similar items.
 use super::client::{relative_date, TradeClient};
+use super::Account;
 use crate::price_check::filters::ItemFilters;
 use anyhow::Result;
 use serde::Deserialize;
@@ -7,21 +8,6 @@ use serde_json::{json, Value};
 
 const SHOW_RESULTS: usize = 20;
 const API_FETCH_LIMIT: u64 = 100;
-
-#[derive(Deserialize)]
-struct Account {
-    name: String,
-    #[serde(rename = "lastCharacterName", default)]
-    last_character_name: String,
-    #[serde(default)]
-    online: Option<Online>,
-}
-
-#[derive(Deserialize)]
-struct Online {
-    #[serde(default)]
-    status: Option<String>,
-}
 
 #[derive(Deserialize)]
 struct Offer {
@@ -57,8 +43,9 @@ struct FetchResult {
 #[derive(Deserialize)]
 struct SearchResult {
     id: String,
+    /// In the API's order (cheapest first), which decides ties after sorting.
     #[serde(default)]
-    result: std::collections::BTreeMap<String, FetchResult>,
+    result: serde_json::Map<String, Value>,
     total: u64,
 }
 
@@ -123,7 +110,13 @@ pub async fn exec_bulk_search(
     let query: SearchResult = serde_json::from_value(raw)?;
 
     let offer = 0;
-    let results: Vec<&FetchResult> = query.result.values().filter(|r| r.listing.offers.len() == 1).collect();
+    // a listing that doesn't have the expected shape is skipped, not fatal
+    let parsed: Vec<FetchResult> = query
+        .result
+        .values()
+        .filter_map(|v| serde_json::from_value(v.clone()).ok())
+        .collect();
+    let results: Vec<&FetchResult> = parsed.iter().filter(|r| r.listing.offers.len() == 1).collect();
 
     Ok(have
         .iter()
@@ -178,11 +171,7 @@ fn to_listing(result: &FetchResult, my_account: Option<&str>, offer: usize) -> B
         is_mine: Some(account.name.as_str()) == my_account,
         ign: account.last_character_name.clone(),
         account_name: account.name.clone(),
-        account_status: match &account.online {
-            Some(o) if o.status.as_deref() == Some("afk") => "afk",
-            Some(_) => "online",
-            None => "offline",
-        },
+        account_status: account.status(),
     }
 }
 
@@ -197,23 +186,44 @@ mod tests {
             "account": { "name": "A", "lastCharacterName": "C" } } })
     }
 
+    fn parse(raw: Value) -> (Vec<FetchResult>, Vec<String>) {
+        let query: SearchResult = serde_json::from_value(raw).unwrap();
+        let keys = query.result.keys().cloned().collect();
+        let parsed = query
+            .result
+            .values()
+            .filter_map(|v| serde_json::from_value(v.clone()).ok())
+            .collect();
+        (parsed, keys)
+    }
+
     #[test]
     fn sorts_by_unit_price_and_splits_by_currency() {
-        let raw = json!({ "id": "q", "total": 3, "result": {
+        let (parsed, _) = parse(json!({ "id": "q", "total": 3, "result": {
             "a": listing("a", "chaos", 300.0, 2.0),
             "b": listing("b", "chaos", 100.0, 1.0),
             "c": listing("c", "divine", 1.0, 1.0),
-        }});
-        let query: SearchResult = serde_json::from_value(raw).unwrap();
-        let mut of_chaos: Vec<&FetchResult> = query
-            .result
-            .values()
+        }}));
+        let mut of_chaos: Vec<&FetchResult> = parsed
+            .iter()
             .filter(|r| r.listing.offers[0].exchange.currency == "chaos")
             .collect();
         let ratio = |r: &FetchResult| r.listing.offers[0].exchange.amount / r.listing.offers[0].item.amount;
         of_chaos.sort_by(|a, b| ratio(a).partial_cmp(&ratio(b)).unwrap());
         assert_eq!(of_chaos[0].id, "b"); // 100 per item beats 150 per item
         assert_eq!(to_listing(of_chaos[0], None, 0).account_status, "offline");
+    }
+
+    #[test]
+    fn keeps_the_api_order_and_skips_odd_listings() {
+        let (parsed, keys) = parse(json!({ "id": "q", "total": 3, "result": {
+            "z": listing("z", "chaos", 100.0, 1.0),
+            "m": json!({ "id": "m" }), // not a listing
+            "a": listing("a", "chaos", 100.0, 1.0),
+        }}));
+        // not sorted by id: ties stay in the order the API gave them
+        assert_eq!(keys, ["z", "m", "a"]);
+        assert_eq!(parsed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["z", "a"]);
     }
 
     #[test]
