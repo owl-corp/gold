@@ -19,6 +19,22 @@ fn is_item(text: &str) -> bool {
     text.starts_with("Item Class: ")
 }
 
+pub async fn read_text() -> Option<String> {
+    read().await
+}
+
+/// Puts back what `read_text` returned; an empty clipboard stays empty.
+pub async fn restore(saved: Option<String>) {
+    let _ = match saved {
+        Some(text) => write(&text).await,
+        None => clear().await,
+    };
+}
+
+pub async fn write_text(text: &str) -> Result<()> {
+    write(text).await
+}
+
 async fn read() -> Option<String> {
     let out = Command::new("wl-paste")
         .args(["--no-newline", "--type", "text"])

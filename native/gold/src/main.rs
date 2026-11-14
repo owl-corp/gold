@@ -1,4 +1,5 @@
 mod app;
+mod chat;
 mod clipboard;
 mod config;
 mod flow;
@@ -103,6 +104,18 @@ async fn handle(app: &Arc<App>, ui: &ui::Ui, cmd: &str) -> Result<String> {
             Ok("ok".into())
         }
         "status" => Ok(format!("ui clients: {}", ui.clients())),
+        chat if chat.starts_with("chat ") => {
+            if hypr::active_class().await? != hypr::POE_CLASS {
+                bail!("Path of Exile is not the focused window");
+            }
+            let text = chat["chat ".len()..].trim_end();
+            let (text, send) = match text.strip_suffix(" --send") {
+                Some(t) => (t, true),
+                None => (text, false),
+            };
+            chat::type_in_chat(text, send).await?;
+            Ok("ok".into())
+        }
         other => bail!("unknown command: {other}"),
     }
 }

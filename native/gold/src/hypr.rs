@@ -55,25 +55,31 @@ async fn dispatch(lua: &str) -> Result<()> {
     Ok(())
 }
 
-async fn send_key(state: &str, key: &str) -> Result<()> {
+async fn send_key_state(state: &str, key: &str) -> Result<()> {
     dispatch(&format!(
         r#"hl.dsp.send_key_state({{ mods = "", state = "{state}", key = "{key}", window = "{GAME_WINDOW}" }})"#
     ))
     .await
 }
 
+/// Press and release a key in the game.
+pub async fn tap(key: &str) -> Result<()> {
+    send_key_state("down", key).await?;
+    send_key_state("up", key).await
+}
+
 /// Press `modifier` + `key` in the game even when it is not focused.
 /// Hyprland's `send_shortcut` drops the modifier for this XWayland window (only
 /// the bare key arrives), so the modifier is pressed as a key of its own.
 pub async fn send_combo(modifier: &str, key: &str) -> Result<()> {
-    send_key("down", modifier).await?;
+    send_key_state("down", modifier).await?;
     let tapped = async {
-        send_key("down", key).await?;
-        send_key("up", key).await
+        send_key_state("down", key).await?;
+        send_key_state("up", key).await
     }
     .await;
     // Always release the modifier, or the game would see it held down.
-    let released = send_key("up", modifier).await;
+    let released = send_key_state("up", modifier).await;
     tapped.and(released)
 }
 
