@@ -342,7 +342,7 @@ fn find_and_resolve_translation(
     Some((stat, matcher))
 }
 
-fn resolve_translation(
+pub fn resolve_translation(
     group: StatGroup,
     match_str: &str,
     mod_type: ModifierType,

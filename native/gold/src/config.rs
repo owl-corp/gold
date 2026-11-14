@@ -27,13 +27,20 @@ impl Config {
         let Some(path) = config_path() else {
             return Config::default();
         };
-        match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                eprintln!("{}: {e}", path.display());
-                Config::default()
-            }),
-            Err(_) => Config::default(),
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Config::default();
+        };
+        let config: Config = toml::from_str(&text).unwrap_or_else(|e| {
+            eprintln!("{}: {e}", path.display());
+            Config::default()
+        });
+        if config.poesessid.is_some() && is_readable_by_others(&path) {
+            eprintln!(
+                "warning: {} holds your session id; run `chmod 600` on it",
+                path.display()
+            );
         }
+        config
     }
 
     /// Config, then `$GOLD_DATA_DIR`, then the data next to the installed binary,
@@ -55,4 +62,9 @@ impl Config {
         }
         PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data"))
     }
+}
+
+fn is_readable_by_others(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o077 != 0)
 }

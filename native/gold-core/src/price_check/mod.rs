@@ -1,12 +1,26 @@
 //! Price check: poe.ninja prices, and later the trade site search.
 pub mod details;
+pub mod filters;
 pub mod ninja;
+pub mod trade;
 
 /// `floorToBracket`: the largest bracket not above `value` (the first if none).
 pub fn floor_to_bracket(value: f64, brackets: &[f64]) -> f64 {
     let mut prev = brackets[0];
     for &num in brackets {
         if num > value {
+            return prev;
+        }
+        prev = num;
+    }
+    prev
+}
+
+/// `ceilToBracket`: the smallest bracket not below `value` (the first if none).
+pub fn ceil_to_bracket(value: f64, brackets: &[f64]) -> f64 {
+    let mut prev = brackets[0];
+    for &num in brackets {
+        if num < value {
             return prev;
         }
         prev = num;

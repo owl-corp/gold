@@ -23,7 +23,7 @@ impl App {
         let dir = config.data_dir();
         let data = GameData::load(&dir, "en").with_context(|| format!("loading game data from {}", dir.display()))?;
         let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
-        let client = gold_core::http::client(&contact)?;
+        let client = gold_core::http::client(&contact, config.poesessid.as_deref())?;
         Ok(App {
             data: Arc::new(data),
             client,

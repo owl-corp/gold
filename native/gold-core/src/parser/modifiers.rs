@@ -73,6 +73,29 @@ pub enum ModifierMechanic {
     Essence,
 }
 
+impl ModifierMechanic {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ModifierMechanic::Synthesised => "synthesised",
+            ModifierMechanic::Corruption => "corrupted",
+            ModifierMechanic::Eldritch => "eldritch",
+            ModifierMechanic::Foulborn => "foulborn",
+            ModifierMechanic::Vestigial => "vestigial",
+            ModifierMechanic::Shaper => "explicit-shaper",
+            ModifierMechanic::Elder => "explicit-elder",
+            ModifierMechanic::Crusader => "explicit-crusader",
+            ModifierMechanic::Hunter => "explicit-hunter",
+            ModifierMechanic::Redeemer => "explicit-redeemer",
+            ModifierMechanic::Warlord => "explicit-warlord",
+            ModifierMechanic::Delve => "explicit-delve",
+            ModifierMechanic::Unveiled => "explicit-veiled",
+            ModifierMechanic::Incursion => "explicit-incursion",
+            ModifierMechanic::Infamous => "explicit-infamous",
+            ModifierMechanic::Essence => "explicit-essence",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct StatRoll {
     pub value: f64,
