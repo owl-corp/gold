@@ -17,11 +17,19 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 
+/// `GOLD_DEV=1` runs a second daemon (and overlay) in its own directory, so a dev build can be tried
+/// next to the installed one. `gold ctl` talks to a running dev daemon first, so the keybinds follow it.
 fn runtime_dir() -> PathBuf {
     let rt = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR not set");
-    let d = PathBuf::from(rt).join("gold");
+    let d = PathBuf::from(rt).join(if std::env::var_os("GOLD_DEV").is_some() { "gold-dev" } else { "gold" });
     std::fs::create_dir_all(&d).ok();
     d
+}
+
+/// The dev daemon's control socket, if one is running (a stale socket file does not answer).
+async fn connect_dev() -> Option<UnixStream> {
+    let dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("gold-dev");
+    UnixStream::connect(dir.join("ctl.sock")).await.ok()
 }
 
 #[tokio::main]
@@ -34,7 +42,10 @@ async fn main() -> Result<()> {
             if cmd.is_empty() {
                 bail!("usage: gold ctl <price-check|close|status>");
             }
-            let mut s = UnixStream::connect(runtime_dir().join("ctl.sock")).await?;
+            let mut s = match connect_dev().await {
+                Some(s) => s,
+                None => UnixStream::connect(runtime_dir().join("ctl.sock")).await?,
+            };
             s.write_all(format!("{}\n", cmd.join(" ")).as_bytes()).await?;
             let mut reply = String::new();
             BufReader::new(s).read_line(&mut reply).await?;

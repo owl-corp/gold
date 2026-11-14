@@ -20,7 +20,7 @@ Scope {
     property bool editing: false
     // epoch of the view the user last closed; a late view for it must not reopen the panel
     property var closedEpoch: null
-    readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/gold/ui.sock"
+    readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + (Quickshell.env("GOLD_DEV") ? "/gold-dev" : "/gold") + "/ui.sock"
 
     function rarityColor(rarity) {
         switch (rarity) {
