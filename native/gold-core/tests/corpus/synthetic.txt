@@ -1,0 +1,406 @@
+Item Class: Stackable Currency
+Rarity: Currency
+Divine Orb
+--------
+Stack Size: 12/10
+--------
+Randomises the numeric values of the random modifiers on an item
+--------
+Right click this item then left click a magic, rare or unique item to apply it. Shift click to unstack.
+=====
+Item Class: Stackable Currency
+Rarity: Currency
+Mirror of Kalandra
+--------
+Stack Size: 1/10
+--------
+Creates a mirrored copy of an item
+=====
+Item Class: Divination Cards
+Rarity: Divination Card
+The Doctor
+--------
+Stack Size: 1/8
+--------
+Headhunter
+--------
+Place this in your stash.
+=====
+Item Class: Support Skill Gems
+Rarity: Gem
+Awakened Added Fire Damage Support
+--------
+Support, Fire
+Level: 5 (Max)
+Mana Multiplier: 160%
+Requires Level 72, 100 Int
+--------
+Supports attack skills.
+--------
+Experience: 0/1
+--------
+Corrupted
+=====
+Item Class: Active Skill Gems
+Rarity: Gem
+Grace
+--------
+Aura, Spell, Duration
+Level: 20 (Max)
+Mana Reserved: 50%
+Quality: +20% (augmented)
+Requires Level 68, 100 Dex
+--------
+Casts an aura spell which grants evasion rating.
+--------
+Experience: 1234/5678
+--------
+Place into an item socket of the right colour to gain this skill.
+=====
+Item Class: Active Skill Gems
+Rarity: Gem
+Vaal Grace
+--------
+Aura, Spell, Vaal
+Level: 21
+--------
+Grace
+--------
+Corrupted
+=====
+Item Class: Belts
+Rarity: Normal
+Leather Belt
+--------
+Requirements:
+Level: 20
+--------
+Item Level: 45
+--------
+{ Implicit Modifier — Life }
++30(25-40) to maximum Life
+=====
+Item Class: Belts
+Rarity: Magic
+Stout Leather Belt of Fending
+--------
+Item Level: 30
+--------
++20 to maximum Life
++8% to Fire Resistance
+=====
+Item Class: Belts
+Rarity: Unique
+Headhunter
+Leather Belt
+--------
+Requirements:
+Level: 40
+--------
+Item Level: 84
+--------
++60 to Strength
++55 to Dexterity
++50 to maximum Life
+When you Kill a Rare monster, you gain its mods for 20 seconds
+--------
+Corrupted
+=====
+Item Class: Body Armours
+Rarity: Unique
+Tabula Rasa
+Simple Robe
+--------
+Quality: +20% (augmented)
+Energy Shield: 33
+--------
+Requirements:
+Level: 1
+--------
+Sockets: W-W-W-W-W-W
+--------
+Item Level: 84
+--------
+Has 6 White Sockets
+--------
+Corrupted
+=====
+Item Class: Body Armours
+Rarity: Rare
+Doom Shell
+Glorious Plate
+--------
+Quality: +20% (augmented)
+Armour: 1130 (augmented)
+--------
+Requirements:
+Level: 68
+Str: 191
+--------
+Sockets: R-R-R-R-R-R
+--------
+Item Level: 86
+--------
++75 to maximum Life
++35% to Fire Resistance
++30% to Lightning Resistance
+42% increased Armour
+=====
+Item Class: Helmets
+Rarity: Rare
+Doom Crown
+Hubris Circlet
+--------
+Quality: +10% (augmented)
+Energy Shield: 190 (augmented)
+--------
+Requirements:
+Level: 69
+Int: 154
+--------
+Sockets: B-B-B-B
+--------
+Item Level: 85
+--------
+{ Prefix Modifier "Blazing" (Tier: 2) — Life }
++98(90-109) to maximum Life
+{ Prefix Modifier "Dazzling" (Tier: 1) — Defences, Energy Shield }
++43(40-45) to maximum Energy Shield
+{ Suffix Modifier "of Haste" (Tier: 3) — Speed }
+12(11-13)% increased Attack Speed
+--------
+Shaper Item
+=====
+Item Class: Bows
+Rarity: Rare
+Havoc Nock
+Imperial Bow
+--------
+Bow
+Quality: +20% (augmented)
+Physical Damage: 180-320 (augmented)
+Elemental Damage: 40-70 (augmented), 10-20 (augmented)
+Critical Strike Chance: 6.50%
+Attacks per Second: 1.60 (augmented)
+--------
+Requirements:
+Level: 70
+Dex: 212
+--------
+Sockets: G-G-G-G-G-G
+--------
+Item Level: 83
+--------
+Adds 12 to 24 Physical Damage
+18% increased Physical Damage
+--------
+Mirrored
+=====
+Item Class: Rings
+Rarity: Rare
+Dragon Loop
+Two-Stone Ring
+--------
+Requirements:
+Level: 60
+--------
+Item Level: 80
+--------
++12% to Fire and Cold Resistances (implicit)
++45 to maximum Life
++25% to Cold Resistance
+--------
+Corrupted
+=====
+Item Class: Rings
+Rarity: Rare
+Phoenix Whorl
+Coral Ring
+--------
+Item Level: 75
+--------
+{ Implicit Modifier — Life }
++28(20-30) to maximum Life
+{ Fractured Prefix Modifier "Rotund" (Tier: 1) — Life }
++92(90-99) to maximum Life
+{ Suffix Modifier "of the Tempest" (Tier: 2) — Elemental, Lightning, Resistance }
++39(36-41)% to Lightning Resistance
+--------
+Fractured Item
+=====
+Item Class: Amulets
+Rarity: Rare
+Brood Locket
+Gold Ring
+--------
+Requirements:
+Level: 1
+--------
+Item Level: 84
+--------
+10% increased Rarity of Items found (implicit)
++12 to Dexterity
+=====
+Item Class: Life Flasks
+Rarity: Magic
+Chemist's Colossal Life Flask of Staunching
+--------
+Quality: +20% (augmented)
+Recovers 1280 (augmented) Life over 4.00 Seconds
+Consumes 15 of 25 Charges on use
+Currently has 25 Charges
+Immunity to Bleeding and Corrupted Blood during Effect
+--------
+Requirements:
+Level: 60
+--------
+Item Level: 84
+--------
+Right click to drink. Can only hold charges while in belt. Refills as you kill monsters.
+=====
+Item Class: Maps
+Rarity: Normal
+Burial Chambers Map (Tier 14)
+--------
+Map Tier: 14
+Item Quantity: +80%
+Item Rarity: +35%
+Monster Pack Size: +25%
+--------
+Item Level: 83
+--------
+Travel to this Map by using it in a personal Map Device.
+=====
+Item Class: Maps
+Rarity: Rare
+Nightmare Grove
+Valdo Map (Tier 16)
+--------
+Map Tier: 16
+Item Quantity: +122% (augmented)
+Item Rarity: +60% (augmented)
+Monster Pack Size: +38% (augmented)
+More Currency: +90% (augmented)
+More Maps: +40% (augmented)
+Quality: +20% (augmented)
+--------
+Item Level: 84
+--------
+Monsters deal 30% extra Damage as Fire
+Players have 20% less Recovery Rate of Life and Energy Shield
+--------
+Corrupted
+=====
+Item Class: Heist Contracts
+Rarity: Normal
+Contract: Bunker
+--------
+Requires Perception (Level 5)
+Area Level: 82
+Heist Target: Scepter (Priceless)
+--------
+Item Level: 82
+--------
+Unlock it by using a Curio Display
+=====
+Item Class: Blueprints
+Rarity: Normal
+Blueprint: Mansion
+--------
+Area Level: 80
+Wings Revealed: 2/4
+Heist Target: Enchanted Armaments
+--------
+Item Level: 80
+=====
+Item Class: Jewels
+Rarity: Rare
+Plague Eye
+Cobalt Jewel
+--------
+Item Level: 84
+--------
+12% increased maximum Life
++18 to Intelligence
+8% increased Spell Damage — Unscalable Value
+=====
+Item Class: Jewels
+Rarity: Magic
+Merciless Large Cluster Jewel of the Whale
+--------
+Item Level: 84
+--------
+Adds 8 Passive Skills
+2 Added Passive Skills are Jewel Sockets
+1 Added Passive Skill is Adrenaline
+=====
+Item Class: Quivers
+Rarity: Normal
+Artillery Quiver
+--------
+Item Level: 50
+=====
+Item Class: Staves
+Rarity: Normal
+Superior Battery Staff
+--------
+Quality: +8% (augmented)
+Physical Damage: 20-60
+Critical Strike Chance: 6.00%
+Attacks per Second: 1.15
+--------
+Requirements:
+Level: 40
+Str: 90
+=====
+Item Class: Gloves
+Rarity: Rare
+Glyph Grip
+Aetherwind Gloves
+--------
+Unidentified
+--------
+Item Level: 79
+=====
+Item Class: Body Armours
+Rarity: Unique
+Aetherwind Gloves
+Aetherwind Gloves
+--------
+Unidentified
+--------
+Item Level: 79
+=====
+Item Class: Currency
+Rarity: Currency
+Exalted Orb
+--------
+Stack Size: 1/10
+=====
+Item Class: Currency
+Rarity: Currency
+Totally Unknown Currency
+--------
+Stack Size: 1/10
+=====
+This is not an item at all
+=====
+Item Class: Boots
+=====
+Item Class: Boots
+Rarity: Rare
+Beast Track
+Ambush Boots
+--------
+Requirements:
+Level: 64
+--------
+Item Level: 84
+--------
+{ Prefix Modifier "Stormcharged" (Tier: 2) — Speed }
+30(25-35)% increased Movement Speed
+{ Suffix Modifier "of the Elder" (Tier: 1) — Elemental, Cold, Resistance }
++45(40-50)% to Cold Resistance — Unscalable Value
+--------
+Elder Item
+Shaper Item

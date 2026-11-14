@@ -1,0 +1,27 @@
+Item Class: Belts
+Rarity: Rare
+Ghoul Twine
+Studded Belt
+--------
+Requirements:
+Level: 28
+--------
+Item Level: 39
+--------
+{ Implicit Modifier }
+23(20-30)% increased Stun Duration on Enemies
+--------
+{ Prefix Modifier "Rotund" (Tier: 4) — Life }
++86(85-99) to maximum Life
+{ Prefix Modifier "Infusing" (Tier: 5) — Damage, Elemental, Attack }
+15(11-20)% increased Elemental Damage with Attack Skills
+{ Prefix Modifier "Ribbed" (Tier: 6) — Defences, Armour }
++54(36-60) to Armour
+{ Suffix Modifier "of the Lizard" (Tier: 8) — Life }
+Regenerate 4.2(2.1-8) Life per second
+{ Suffix Modifier "of the Salamander" (Tier: 7) — Elemental, Fire, Resistance }
++16(12-17)% to Fire Resistance
+{ Master Crafted Suffix Modifier "of Craft" (Rank: 1) — Attribute }
++17(15-20) to Strength
+
+=====

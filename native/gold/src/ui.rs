@@ -50,7 +50,9 @@ impl Ui {
     }
 
     pub fn show(&self, view: serde_json::Value) {
-        let _ = self.out.send(serde_json::json!({ "type": "show", "view": view }).to_string());
+        let _ = self
+            .out
+            .send(serde_json::json!({ "type": "show", "view": view }).to_string());
     }
 
     pub fn hide(&self) {

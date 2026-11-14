@@ -1,0 +1,305 @@
+Item Class: Body Armours
+Rarity: Rare
+Havoc Shell
+Glorious Plate
+--------
+Quality: +20% (augmented)
+Armour: 1368 (augmented)
+--------
+Requirements:
+Level: 68
+Str: 191
+--------
+Sockets: R-R-R-R-R-R
+--------
+Item Level: 86
+--------
+{ Prefix Modifier "Impenetrable" (Tier: 1) — Defences, Armour }
++102(100-120) to Armour
+{ Prefix Modifier "Fortuitous" (Tier: 2) — Defences, Armour }
+52(49-54)% increased Armour
+{ Prefix Modifier "Rotund" (Tier: 3) — Life }
++112(105-119) to maximum Life
+{ Suffix Modifier "of the Volcano" (Tier: 1) — Elemental, Fire, Resistance }
++46(43-48)% to Fire Resistance
+{ Suffix Modifier "of Haste" (Tier: 2) — Elemental, Cold, Resistance }
++41(36-41)% to Cold Resistance
+=====
+Item Class: Rings
+Rarity: Rare
+Dragon Knot
+Coral Ring
+--------
+Requirements:
+Level: 1
+--------
+Item Level: 84
+--------
+{ Implicit Modifier — Life }
++28(20-30) to maximum Life
+{ Master Crafted Prefix Modifier "Upgraded" (Rank: 2) — Resource, Mana }
++37(35-38) to maximum Mana
+{ Fractured Suffix Modifier "of the Whale" (Tier: 2) — Life }
++50(46-50) to maximum Life
+{ Prefix Modifier "Veiled" — Life }
+Veiled Prefix
+{ Suffix Modifier "of Anarchy" (Tier: 1) — Elemental, Lightning, Resistance }
++36(36-41)% to Lightning Resistance
+--------
+Fractured Item
+=====
+Item Class: Belts
+Rarity: Unique
+Headhunter
+Leather Belt
+--------
+Requirements:
+Level: 40
+--------
+Item Level: 84
+--------
+{ Unique Modifier — Attribute }
++55(40-55) to Strength
+{ Unique Modifier — Attribute }
++50(40-55) to Dexterity
+{ Unique Modifier — Life }
++78(70-100) to maximum Life
+{ Unique Modifier }
+When you Kill a Rare monster, you gain its mods for 20 seconds
+--------
+Corrupted
+=====
+Item Class: Belts
+Rarity: Unique
+Foulborn Headhunter
+Leather Belt
+--------
+Item Level: 84
+--------
+{ Unique Modifier — Attribute }
++45(40-55) to Strength
+{ Foulborn Unique Modifier — Life }
++97(70-100) to maximum Life
+=====
+Item Class: Body Armours
+Rarity: Unique
+Atziri's Splendour
+Sacrificial Garb
+--------
+Quality: +20% (augmented)
+Armour: 590 (augmented)
+Evasion Rating: 590 (augmented)
+Energy Shield: 112 (augmented)
+--------
+Requirements:
+Level: 62
+--------
+Sockets: B-B-B-B-B-B
+--------
+Item Level: 84
+--------
+{ Unique Modifier — Defences }
++120(100-120) to maximum Energy Shield
+{ Unique Modifier — Life }
++85(70-110) to maximum Life
+{ Corruption Implicit Modifier — Life }
++55(40-60) to maximum Life
+--------
+Corrupted
+--------
+Shaper Item
+=====
+Item Class: Helmets
+Rarity: Rare
+Beast Visor
+Bone Helmet
+--------
+Quality: +5% (augmented)
+Armour: 300
+Energy Shield: 52
+--------
+Item Level: 85
+--------
+{ Eater of Worlds Implicit Modifier (Greater) — Damage }
+10(8-12)% increased Damage
+{ Prefix Modifier "Impenetrable" (Tier: 1) — Defences, Armour }
++89(80-100) to Armour
+Eater of Worlds Item
+=====
+Item Class: Helmets
+Rarity: Rare
+Crown of the Pit
+Hubris Circlet
+--------
+Item Level: 86
+--------
+{ Searing Exarch Implicit Modifier (Perfect) — Damage }
+20(18-22)% increased Damage
+{ Prefix Modifier "Blazing" (Tier: 2) — Life — 15% Increased }
++98(90-109) to maximum Life
+{ Suffix Modifier "of Haste" (Tier: 3) — Speed, Attack — 20% Increased }
+15(11-13)% increased Attack Speed
+Searing Exarch Item
+=====
+Item Class: Amulets
+Rarity: Rare
+Soul Choker
+Gold Ring
+--------
+Item Level: 85
+--------
+{ Implicit Modifier — Life }
++28(20-30) to maximum Life (enchant)
+=====
+Item Class: Jewels
+Rarity: Rare
+Beast Eye
+Cobalt Jewel
+--------
+Item Level: 84
+--------
+{ Prefix Modifier "Rotund" (Tier: 4) — Life }
+12(10-14)% increased maximum Life
+{ Suffix Modifier "of Skill" (Tier: 3) — Attribute }
++18(16-20) to Intelligence
+{ Suffix Modifier "of the Pit" (Tier: 1) — Elemental }
++12 to maximum Life — Unscalable Value
+=====
+Item Class: Jewels
+Rarity: Magic
+Merciless Large Cluster Jewel of the Whale
+--------
+Item Level: 84
+--------
+Adds 8 Passive Skills (enchant)
+2 Added Passive Skills are Jewel Sockets (enchant)
+{ Prefix Modifier "Merciless" (Tier: 1) — Damage }
+1 Added Passive Skill is Adrenaline
+=====
+Item Class: Rings
+Rarity: Rare
+Beast Spiral
+Two-Stone Ring
+--------
+Item Level: 80
+--------
+{ Implicit Modifier — Elemental, Fire, Cold, Resistance }
++12(10-15)% to Fire and Cold Resistances
+{ Prefix Modifier "Rotund" (Tier: 3) — Life }
++75(70-80) to maximum Life
+=====
+Item Class: Rings
+Rarity: Normal
+Synthesised Coral Ring
+--------
+Item Level: 84
+--------
+{ Implicit Modifier — Life }
++28(20-30) to maximum Life
+--------
+Synthesised Item
+=====
+Item Class: Body Armours
+Rarity: Rare
+Dragon Skin
+Glorious Plate
+--------
+You cannot use this item. Its stats will be ignored
+--------
+Requirements:
+Level: 68
+--------
+Item Level: 86
+--------
+{ Prefix Modifier "Rotund" (Tier: 3) — Life }
++112(105-119) to maximum Life
+=====
+Item Class: Rings
+Rarity: Rare
+Twisted Loop
+Steel Ring
+--------
+Item Level: 84
+--------
+{ Implicit Modifier — Elemental, Resistance }
++12(8-12)% to Fire Resistance (enchant)
+{ Prefix Modifier "Rotund" (Tier: 3) — Life }
++75(70-80) to maximum Life (scourge)
+=====
+Item Class: Life Flasks
+Rarity: Rare
+Dragon Vial
+Colossal Life Flask
+--------
+Quality: +20% (augmented)
+Recovers 1280 (augmented) Life over 4.00 Seconds
+Consumes 15 of 25 Charges on use
+Currently has 25 Charges
+--------
+Item Level: 84
+--------
+{ Prefix Modifier "Chemist's" (Tier: 2) — Flask }
+28(20-30)% increased Charge Recovery
+{ Suffix Modifier "of Staunching" (Tier: 1) — Flask }
+Immunity to Bleeding and Corrupted Blood during Effect
+=====
+Item Class: Maps
+Rarity: Rare
+Dread Maze
+Valdo Map (Tier 16)
+--------
+Map Tier: 16
+Item Quantity: +122% (augmented)
+Item Rarity: +60% (augmented)
+--------
+Item Level: 84
+--------
+{ Prefix Modifier "Overlord's" (Tier: 1) — Monster }
+Monsters deal 30% extra Damage as Fire
+{ Suffix Modifier "of Congealment" (Tier: 2) — Life }
+Players have 20% less Recovery Rate of Life and Energy Shield
+=====
+Item Class: Bows
+Rarity: Rare
+Havoc Barb
+Imperial Bow
+--------
+Physical Damage: 180-320 (augmented)
+Elemental Damage: 40-70 (augmented), 10-20 (augmented)
+Critical Strike Chance: 6.50%
+Attacks per Second: 1.60 (augmented)
+--------
+Item Level: 83
+--------
+{ Prefix Modifier "Merciless" (Tier: 1) — Damage, Physical, Attack }
+Adds 24(20-26) to 44(40-48) Physical Damage
+{ Prefix Modifier "Tempered" (Tier: 3) — Damage, Physical }
+85(75-99)% increased Physical Damage
+--------
+Mirrored
+=====
+Item Class: Belts
+Rarity: Rare
+Ghoul Twine
+Studded Belt
+--------
+Requirements:
+Level: 28
+--------
+Item Level: 39
+--------
+{ Implicit Modifier }
+23(20-30)% increased Stun Duration on Enemies
+--------
+{ Prefix Modifier "Rotund" (Tier: 4) — Life }
++86(85-99) to maximum Life
+{ Prefix Modifier "Infusing" (Tier: 5) — Damage, Elemental, Attack }
+15(11-20)% increased Elemental Damage with Attack Skills
+{ Prefix Modifier "Ribbed" (Tier: 6) — Defences, Armour }
++54(36-60) to Armour
+{ Suffix Modifier "of the Lizard" (Tier: 8) — Life }
+Regenerate 4.2(2.1-8) Life per second
+{ Suffix Modifier "of the Salamander" (Tier: 7) — Elemental, Fire, Resistance }
++16(12-17)% to Fire Resistance
+{ Master Crafted Suffix Modifier "of Craft" (Rank: 1) — Attribute }
++17(15-20) to Strength

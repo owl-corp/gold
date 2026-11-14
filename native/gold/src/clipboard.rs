@@ -25,7 +25,9 @@ async fn read() -> Option<String> {
         .output()
         .await
         .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 async fn write(text: &str) -> Result<()> {
@@ -33,7 +35,12 @@ async fn write(text: &str) -> Result<()> {
         .stdin(Stdio::piped())
         .spawn()
         .context("wl-copy not found")?;
-    child.stdin.take().context("no stdin")?.write_all(text.as_bytes()).await?;
+    child
+        .stdin
+        .take()
+        .context("no stdin")?
+        .write_all(text.as_bytes())
+        .await?;
     child.wait().await?;
     Ok(())
 }
@@ -89,7 +96,11 @@ fn log_item(text: &str) {
     }
     .join("gold");
     let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("items.log")) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("items.log"))
+    {
         use std::io::Write;
         let _ = writeln!(f, "{text}\n=====");
     }
