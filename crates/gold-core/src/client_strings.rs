@@ -259,7 +259,7 @@ mod tests {
     fn parses_english_client_strings() {
         let src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../data/en/client_strings.js"
+            "/../../assets/en/client_strings.js"
         ))
         .unwrap();
         let cs = ClientStrings::parse(&src).unwrap();

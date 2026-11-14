@@ -76,7 +76,7 @@ fn options() -> PresetOptions {
 #[test]
 fn rust_filters_match_golden() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let data = GameData::load(&root.join("../../data"), "en").unwrap();
+    let data = GameData::load(&root.join("../../assets"), "en").unwrap();
 
     let (mut checked, mut skipped) = (0, 0);
     let mut failures = Vec::new();

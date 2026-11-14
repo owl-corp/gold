@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Try the working tree without touching the installed daemon or overlay.
-#   native/dev.sh          build, (re)start a dev daemon and a dev overlay, bind Ctrl+D to the dev build
-#   native/dev.sh stop     stop them and remove the bind
-#   native/dev.sh logs     follow their logs
+#   scripts/dev.sh          build, (re)start a dev daemon and a dev overlay, bind Ctrl+D to the dev build
+#   scripts/dev.sh stop     stop them and remove the bind
+#   scripts/dev.sh logs     follow their logs
 # While the dev daemon runs, `gold ctl` talks to it instead of the installed one; the installed
 # overlay stays connected to the installed daemon and stays idle.
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")"
+cd "$(dirname "$(readlink -f "$0")")/.."
 state="${XDG_RUNTIME_DIR:?}/gold-dev-pids"
 gold="$PWD/target/debug/gold"
 
@@ -30,7 +30,7 @@ case "${1:-start}" in
   logs) tail -f /tmp/gold-dev-daemon.log /tmp/gold-dev-overlay.log ;;
   start)
     stop
-    nix develop .. -c cargo build --quiet
+    nix develop -c cargo build --quiet
     export GOLD_DEV=1
     launch /tmp/gold-dev-daemon.log "$gold" daemon
     (cd quickshell/dev && launch /tmp/gold-dev-overlay.log quickshell -p shell.qml)

@@ -57,7 +57,7 @@ fn split_corpus(input: &str) -> Vec<String> {
 #[test]
 fn rust_parser_matches_golden() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let data = GameData::load(&root.join("../../data"), "en").unwrap();
+    let data = GameData::load(&root.join("../../assets"), "en").unwrap();
 
     let mut checked = 0;
     let mut failures = Vec::new();

@@ -17,21 +17,22 @@
           src = nixpkgs.lib.fileset.toSource {
             root = ./.;
             fileset = nixpkgs.lib.fileset.unions [
-              ./native
-              ./data/en
+              ./Cargo.toml
+              ./Cargo.lock
+              ./crates
+              ./quickshell
+              ./assets/en
             ];
           };
-          cargoRoot = "native";
-          buildAndTestSubdir = "native";
-          cargoLock.lockFile = ./native/Cargo.lock;
+          cargoLock.lockFile = ./Cargo.lock;
           cargoBuildFlags = [ "-p" "gold" ];
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
 
           postInstall = ''
             mkdir -p $out/share/gold/data/en $out/share/gold/quickshell
-            cp data/en/{client_strings.js,items.ndjson,stats.ndjson} $out/share/gold/data/en/
-            cp native/quickshell/GoldOverlay.qml $out/share/gold/quickshell/
+            cp assets/en/{client_strings.js,items.ndjson,stats.ndjson} $out/share/gold/data/en/
+            cp quickshell/GoldOverlay.qml $out/share/gold/quickshell/
             wrapProgram $out/bin/gold --prefix PATH : ${nixpkgs.lib.makeBinPath [ pkgs.wl-clipboard ]}
           '';
 

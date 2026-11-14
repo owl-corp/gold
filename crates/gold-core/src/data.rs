@@ -419,7 +419,7 @@ mod tests {
     use super::*;
 
     pub fn data_dir() -> std::path::PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
     }
 
     #[test]

@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/gold-core", "crates/gold"]
+resolver = "2"

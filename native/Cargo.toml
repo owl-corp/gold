@@ -1,3 +1,0 @@
-[workspace]
-members = ["gold-core", "gold"]
-resolver = "2"

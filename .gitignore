@@ -26,6 +26,6 @@ docs/.vitepress/dist
 docs/.vitepress/cache
 
 # native
-/native/target
+/target
 /result
 

@@ -66,7 +66,7 @@ impl Config {
                 return d;
             }
         }
-        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data"))
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets"))
     }
 }
 

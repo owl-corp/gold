@@ -43,7 +43,7 @@ fn viscera_modifiers_are_parsed() {
 {"name":"Crustacean's Claw","refName":"Crustacean's Claw","namespace":"ITEM","icon":"","craftable":{"category":"Viscera"}}"#,
     )
     .unwrap();
-    let data = GameData::load_with_extra(&root.join("../../data"), Some(&extra), "en").unwrap();
+    let data = GameData::load_with_extra(&root.join("../../assets"), Some(&extra), "en").unwrap();
     std::fs::remove_dir_all(&extra).unwrap();
 
     let item = parse_clipboard(&data, ITEM).unwrap();

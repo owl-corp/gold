@@ -364,7 +364,7 @@ mod tests {
 
     fn data() -> GameData {
         GameData::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
             "en",
         )
         .unwrap()

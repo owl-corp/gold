@@ -210,7 +210,7 @@ mod tests {
 
     fn view_of(text: &str) -> Value {
         let data = GameData::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
             "en",
         )
         .unwrap();
@@ -239,7 +239,7 @@ mod tests {
     fn filter_rows_keep_their_index_and_hide_hidden_disabled_filters() {
         use gold_core::price_check::filters::presets::{create_presets, PresetOptions};
         let data = GameData::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"),
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
             "en",
         )
         .unwrap();
