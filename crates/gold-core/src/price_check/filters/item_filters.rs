@@ -540,14 +540,14 @@ fn create_gem_filters(
     filters.gem_level = Some(FilterNumeric::new(gem_level, gem_level < max_level));
 
     if let Some(quality) = item.quality.filter(|q| *q != 0.0 && !q.is_nan()) {
-        let disabled = if max_level == 1.0 {
-            false
-        } else if max_level == 20.0 && !transfigured {
-            quality < 16.0
+        filters.quality = Some(if max_level == 1.0 {
+            FilterNumeric::new(quality, false)
+        } else if quality < 20.0 {
+            // Below 20% search 2% lower so near-misses still match.
+            FilterNumeric::new(crate::js::max(quality - 2.0, 0.0), false)
         } else {
-            quality < 20.0
-        };
-        filters.quality = Some(FilterNumeric::new(quality, disabled));
+            FilterNumeric::new(quality, false)
+        });
     }
 
     Ok(filters)

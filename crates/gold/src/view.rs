@@ -94,6 +94,13 @@ pub fn render(s: &Session) -> Value {
         json!({ "offline": t.offline, "merchantOnly": t.merchant_only, "listed": t.listed, "currency": t.currency })
     });
 
+    // the quality minimum the search uses (gems search below their own quality)
+    let quality = s
+        .preset()
+        .and_then(|p| p.filters.quality.as_ref())
+        .filter(|q| !q.disabled)
+        .map(|q| q.value);
+
     let presets: Vec<Value> = s
         .presets
         .iter()
@@ -131,6 +138,7 @@ pub fn render(s: &Session) -> Value {
             "hiddenCount": hidden_count,
             "showHidden": s.show_hidden,
             "tradeFilters": trade_filters,
+            "searchQuality": quality,
             "trade": trade,
             "lines": s.note.iter().cloned().chain(item.unknown_modifiers.iter().map(|m| format!("? {}", m.text))).collect::<Vec<_>>(),
         }),

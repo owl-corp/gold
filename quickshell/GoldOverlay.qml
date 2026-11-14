@@ -327,6 +327,12 @@ Scope {
                         }
                     }
 
+                    StyledText {
+                        visible: root.view?.searchQuality != null
+                        text: "quality ≥ " + root.view?.searchQuality + "%"
+                        color: Theme.accent
+                    }
+
                     // how the trade search is made; changing one runs the search again
                     RowLayout {
                         visible: root.view?.tradeFilters != null && (root.view?.presets?.length ?? 0) > 0
