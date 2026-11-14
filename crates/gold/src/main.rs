@@ -61,9 +61,18 @@ async fn main() -> Result<()> {
     }
 }
 
-/// `gold data update`: add the items the trade API lists and the shipped data lacks.
+/// Writes `lines` to `<dir>/<name>` through a temporary file.
+fn write_lines(dir: &std::path::Path, name: &str, lines: &[String]) -> Result<std::path::PathBuf> {
+    let target = dir.join(name);
+    let tmp = dir.join(format!("{name}.tmp"));
+    std::fs::write(&tmp, lines.iter().map(|l| format!("{l}\n")).collect::<String>())?;
+    std::fs::rename(&tmp, &target)?;
+    Ok(target)
+}
+
+/// `gold data update`: add the items and stats the trade API lists and the shipped data lacks.
 async fn update_data() -> Result<()> {
-    use gold_core::data_update::extra_items;
+    use gold_core::data_update::{extra_items, extra_stats};
     let config = config::Config::load();
     let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
     let client = gold_core::http::client(&contact, None)?;
@@ -72,26 +81,33 @@ async fn update_data() -> Result<()> {
             .get(format!("https://www.pathofexile.com/api/trade/data/{what}"))
             .send()
     };
-    let body = fetch("items").await?.error_for_status()?.text().await?;
+    let items = fetch("items").await?.error_for_status()?.text().await?;
     let statics = fetch("static").await?.error_for_status()?.text().await?;
-    let shipped = std::fs::read_to_string(config.data_dir().join("en/items.ndjson"))?;
-    let extra = extra_items(&body, &statics, &shipped)?;
+    let stats = fetch("stats").await?.error_for_status()?.text().await?;
+    let shipped = |name: &str| std::fs::read_to_string(config.data_dir().join("en").join(name));
+    let extra = extra_items(&items, &statics, &shipped("items.ndjson")?)?;
+    let extra_stats = extra_stats(&stats, &shipped("stats.ndjson")?)?;
 
     let dir = config::extra_data_dir()
         .ok_or_else(|| anyhow::anyhow!("no HOME or XDG_DATA_HOME"))?
         .join("en");
     std::fs::create_dir_all(&dir)?;
-    let target = dir.join(gold_core::data::EXTRA_ITEMS);
-    let tmp = dir.join(format!("{}.tmp", gold_core::data::EXTRA_ITEMS));
-    std::fs::write(&tmp, extra.lines.iter().map(|l| format!("{l}\n")).collect::<String>())?;
-    std::fs::rename(&tmp, &target)?;
+    let target = write_lines(&dir, gold_core::data::EXTRA_ITEMS, &extra.lines)?;
     println!(
-        "{}: {} items, {} uniques ({} uniques skipped, base type unknown; {} entries of unmapped groups). Restart the daemon to load them.",
+        "{}: {} items, {} uniques ({} uniques skipped, base type unknown; {} entries of unmapped groups).",
         target.display(),
         extra.bases,
         extra.uniques,
         extra.skipped_uniques,
         extra.unmapped
+    );
+    let target = write_lines(&dir, gold_core::data::EXTRA_STATS, &extra_stats.lines)?;
+    println!(
+        "{}: {} new stats, {} shipped stats extended ({} skipped). Restart the daemon to load them.",
+        target.display(),
+        extra_stats.added,
+        extra_stats.patched,
+        extra_stats.skipped
     );
     Ok(())
 }

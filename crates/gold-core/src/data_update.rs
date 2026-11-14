@@ -1,4 +1,4 @@
-//! Items the shipped data lacks, taken from the trade API (`/api/trade/data/items`
+//! Items and stats the shipped data lacks, taken from the trade API (`/api/trade/data/items`
 //! and `/api/trade/data/static`).
 //!
 //! The shipped data files lag behind the game, so a new item stays unknown until
@@ -16,7 +16,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 enum Shape {
     /// `ITEM` with the given craftable category, if any.
@@ -273,6 +273,176 @@ pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Resul
     Ok(out)
 }
 
+// ---- stats ----
+
+#[derive(Deserialize)]
+struct StatsResponse {
+    result: Vec<StatGroup>,
+}
+
+#[derive(Deserialize)]
+struct StatGroup {
+    id: String,
+    entries: Vec<StatEntry>,
+}
+
+#[derive(Deserialize)]
+struct StatEntry {
+    id: String,
+    text: String,
+    option: Option<Value>,
+}
+
+#[derive(Deserialize)]
+struct ShippedStat {
+    #[serde(rename = "ref")]
+    ref_: String,
+    #[serde(default)]
+    matchers: Vec<ShippedMatcher>,
+    #[serde(default)]
+    trade: ShippedTrade,
+}
+
+#[derive(Deserialize)]
+struct ShippedMatcher {
+    string: String,
+    advanced: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+struct ShippedTrade {
+    #[serde(default)]
+    ids: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ShippedLine {
+    Group { stats: Vec<ShippedStat> },
+    Stat(ShippedStat),
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct ExtraStats {
+    /// `stats.extra.ndjson` lines: whole stats and `{"patch": ...}` lines.
+    pub lines: Vec<String>,
+    /// New stats.
+    pub added: usize,
+    /// Shipped stats that got trade ids for a modifier type they lacked.
+    pub patched: usize,
+    /// Stats left out: the text matches a stat of a resolver group, several ids share
+    /// one text, or a matcher collides with a shipped one.
+    pub skipped: usize,
+}
+
+/// Trade stat types that are not read from item text (`pseudo` is built by hand, the
+/// crucible tree is retired).
+const STAT_SKIP: [&str; 2] = ["pseudo", "crucible"];
+
+/// The line a stat has on an item: no "(Local)" suffix.
+fn stat_text(text: &str) -> &str {
+    text.strip_suffix(" (Local)").unwrap_or(text)
+}
+
+/// Replaces `+#` and `-#` by `#`: rolls take their sign into the number, which is
+/// why the matchers of shipped stats have none.
+fn matcher_text(text: &str) -> String {
+    text.replace("+#", "#").replace("-#", "#")
+}
+
+/// Wordings of the same stat with a negative roll, as in the shipped matchers.
+const NEGATED: [(&str, &str); 3] = [
+    (" increased ", " reduced "),
+    (" more ", " less "),
+    (" faster", " slower"),
+];
+
+/// `trade_stats` is the `/api/trade/data/stats` response, `shipped` the shipped `stats.ndjson`.
+pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
+    let response: StatsResponse = serde_json::from_str(trade_stats).context("trade stats response")?;
+
+    let mut have_ids: HashSet<String> = HashSet::new();
+    let mut matchers: HashSet<String> = HashSet::new();
+    // ref -> (stats with that ref, whether it is one plain stat) and its trade id types
+    let mut refs: HashMap<String, (usize, bool, BTreeMap<String, Vec<String>>)> = HashMap::new();
+    for (n, line) in shipped.lines().enumerate() {
+        let line: ShippedLine = serde_json::from_str(line).with_context(|| format!("stats.ndjson line {}", n + 1))?;
+        let (stats, plain) = match line {
+            ShippedLine::Group { stats } => (stats, false),
+            ShippedLine::Stat(s) => (vec![s], true),
+        };
+        for s in stats {
+            for m in &s.matchers {
+                matchers.insert(m.string.clone());
+                matchers.extend(m.advanced.clone());
+            }
+            have_ids.extend(s.trade.ids.values().flatten().cloned());
+            let entry = refs.entry(s.ref_).or_insert((0, plain, s.trade.ids.clone()));
+            entry.0 += 1;
+        }
+    }
+
+    // text -> modifier type -> missing ids; texts in first-seen order
+    let mut order: Vec<&str> = Vec::new();
+    let mut missing: HashMap<&str, BTreeMap<&str, Vec<&str>>> = HashMap::new();
+    for g in response.result.iter().filter(|g| !STAT_SKIP.contains(&g.id.as_str())) {
+        for e in g
+            .entries
+            .iter()
+            .filter(|e| e.option.is_none() && !have_ids.contains(&e.id))
+        {
+            let text = stat_text(&e.text);
+            if !missing.contains_key(text) {
+                order.push(text);
+            }
+            missing.entry(text).or_default().entry(&g.id).or_default().push(&e.id);
+        }
+    }
+
+    let mut out = ExtraStats::default();
+    for text in order {
+        let by_type = &missing[text];
+        if by_type.values().any(|ids| ids.len() > 1) || text == "#" {
+            out.skipped += 1;
+            continue;
+        }
+        let ids: BTreeMap<&str, Vec<&str>> = by_type.clone();
+        if let Some((count, plain, shipped_ids)) = refs.get(text) {
+            let ids: BTreeMap<&str, &Vec<&str>> = ids
+                .iter()
+                .filter(|(k, _)| !shipped_ids.contains_key(**k))
+                .map(|(k, v)| (*k, v))
+                .collect();
+            if *count == 1 && *plain && !ids.is_empty() {
+                out.lines.push(json!({"patch": text, "ids": ids}).to_string());
+                out.patched += 1;
+            } else {
+                out.skipped += 1;
+            }
+            continue;
+        }
+        let plain = matcher_text(text);
+        if matchers.contains(&plain) {
+            out.skipped += 1;
+            continue;
+        }
+        let mut list = vec![json!({"string": plain})];
+        if let Some((from, to)) = NEGATED.iter().find(|(from, _)| plain.contains(from)) {
+            let negated = plain.replacen(from, to, 1);
+            if !matchers.contains(&negated) {
+                list.push(json!({"string": negated, "negate": true}));
+                matchers.insert(negated);
+            }
+        }
+        matchers.insert(plain);
+        let better = i32::from(text.starts_with("+#") || text.contains(" increased ") || text.contains(" more "));
+        out.lines
+            .push(json!({"ref": text, "better": better, "matchers": list, "trade": {"ids": ids}}).to_string());
+        out.added += 1;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,5 +555,73 @@ mod tests {
         let db = crate::data::ItemDb::parse(&format!("{SHIPPED}{}\n", extra.lines.join("\n"))).unwrap();
         let found = db.by_translated("ITEM", "Primate Foot").unwrap();
         assert_eq!(found[0].craftable.as_ref().unwrap().category.known(), None);
+    }
+
+    const SHIPPED_STATS: &str = concat!(
+        r##"{"ref":"+# to Strength","better":1,"matchers":[{"string":"# to Strength"}],"trade":{"ids":{"explicit":["explicit.stat_1"]}}}"##,
+        "\n",
+        r##"{"resolve":{"strat":"trivial-merge"},"stats":[{"ref":"Grouped","better":1,"matchers":[{"string":"Grouped"}],"trade":{"ids":{"explicit":["explicit.stat_2"]}}}]}"##,
+        "\n",
+    );
+
+    fn stats_api(entries: &str) -> String {
+        format!(
+            r#"{{"result":[{{"id":"implicit","entries":[{entries}]}},{{"id":"crucible","entries":[{{"id":"crucible.stat_9","text":"Tree","type":"crucible"}}]}}]}}"#
+        )
+    }
+
+    fn stat_lines(entries: &str) -> (ExtraStats, Vec<Value>) {
+        let e = extra_stats(&stats_api(entries), SHIPPED_STATS).unwrap();
+        let lines = e.lines.iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+        (e, lines)
+    }
+
+    #[test]
+    fn new_stats_get_sign_free_and_negated_matchers() {
+        let (e, lines) = stat_lines(
+            r##"{"id":"implicit.stat_5","text":"+#% to Foo","type":"implicit"},{"id":"implicit.stat_6","text":"#% increased Bar","type":"implicit"}"##,
+        );
+        assert_eq!(e.added, 2);
+        assert_eq!(lines[0]["matchers"][0]["string"], "#% to Foo");
+        assert_eq!(lines[0]["better"], 1);
+        assert_eq!(lines[1]["matchers"][1]["string"], "#% reduced Bar");
+        assert_eq!(lines[1]["matchers"][1]["negate"], true);
+        assert_eq!(lines[1]["trade"]["ids"]["implicit"][0], "implicit.stat_6");
+    }
+
+    #[test]
+    fn known_stats_get_patched_with_missing_types_only() {
+        let (e, lines) = stat_lines(
+            r##"{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_8","text":"Grouped","type":"implicit"}"##,
+        );
+        assert_eq!((e.added, e.patched, e.skipped), (0, 1, 1));
+        assert_eq!(lines[0]["patch"], "+# to Strength");
+        assert_eq!(lines[0]["ids"]["implicit"][0], "implicit.stat_7");
+    }
+
+    #[test]
+    fn ambiguous_and_known_ids_are_skipped() {
+        let (e, _) = stat_lines(
+            r##"{"id":"explicit.stat_1","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_3","text":"Twin","type":"implicit"},{"id":"implicit.stat_4","text":"Twin (Local)","type":"implicit"}"##,
+        );
+        assert_eq!((e.added, e.patched, e.skipped), (0, 0, 1));
+    }
+
+    #[test]
+    fn extra_stats_load_into_the_stat_db() {
+        let (_, lines) = stat_lines(
+            r##"{"id":"implicit.stat_5","text":"+#% to Foo","type":"implicit"},{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"}"##,
+        );
+        let db = crate::data::StatDb::parse_with_extra(
+            SHIPPED_STATS,
+            &lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
+        )
+        .unwrap();
+        assert!(db.by_match_str("#% to Foo").is_some());
+        let crate::data::StatOrGroup::Stat(strength) = db.by_ref("+# to Strength").unwrap() else {
+            panic!()
+        };
+        assert_eq!(strength.trade.ids["implicit"][0], "implicit.stat_7");
+        assert_eq!(strength.trade.ids["explicit"][0], "explicit.stat_1");
     }
 }

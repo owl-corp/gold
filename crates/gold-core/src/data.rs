@@ -306,11 +306,41 @@ pub struct StatDb {
 
 impl StatDb {
     pub fn parse(ndjson: &str) -> Result<Self> {
+        Self::parse_with_extra(ndjson, "")
+    }
+
+    /// `extra` (see `data_update`) holds either whole stats, appended after the shipped ones, or
+    /// `{"patch": <ref>, "ids": {<type>: [<id>]}}` lines that give a shipped stat trade ids for
+    /// modifier types it lacks.
+    pub fn parse_with_extra(ndjson: &str, extra: &str) -> Result<Self> {
         let mut lines = Vec::new();
         for (n, line) in ndjson.lines().enumerate() {
             lines.push(
                 serde_json::from_str::<StatOrGroup>(line).with_context(|| format!("stats.ndjson line {}", n + 1))?,
             );
+        }
+        let mut plain: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for (n, line) in lines.iter().enumerate() {
+            if let StatOrGroup::Stat(s) = line {
+                plain.insert(s.ref_.clone(), n);
+            }
+        }
+        for (n, line) in extra.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
+            let context = || format!("stats.extra.ndjson line {}", n + 1);
+            let value: Value = serde_json::from_str(line).with_context(context)?;
+            let Some(target) = value.get("patch").and_then(Value::as_str) else {
+                lines.push(serde_json::from_value(value).with_context(context)?);
+                continue;
+            };
+            let ids: BTreeMap<String, Vec<String>> =
+                serde_json::from_value(value.get("ids").cloned().unwrap_or_default()).with_context(context)?;
+            if let Some(&at) = plain.get(target) {
+                if let StatOrGroup::Stat(stat) = &mut lines[at] {
+                    for (kind, list) in ids {
+                        stat.trade.ids.entry(kind).or_insert(list);
+                    }
+                }
+            }
         }
 
         let (mut by_ref, mut by_matcher) = (Vec::new(), Vec::new());
@@ -403,16 +433,21 @@ impl GameData {
                 items.push_str(&text);
             }
         }
+        let stats_extra = extra_dir
+            .and_then(|d| std::fs::read_to_string(d.join(lang).join(EXTRA_STATS)).ok())
+            .unwrap_or_default();
         Ok(GameData {
             cs: ClientStrings::parse(&read("client_strings.js")?)?,
             items: ItemDb::parse(&items)?,
-            stats: StatDb::parse(&read("stats.ndjson")?)?,
+            stats: StatDb::parse_with_extra(&read("stats.ndjson")?, &stats_extra)?,
         })
     }
 }
 
 /// File name of the generated extra items inside `<extra_dir>/<lang>/`.
 pub const EXTRA_ITEMS: &str = "items.extra.ndjson";
+/// File name of the generated extra stats (`StatDb::parse_with_extra`).
+pub const EXTRA_STATS: &str = "stats.extra.ndjson";
 
 #[cfg(test)]
 mod tests {
