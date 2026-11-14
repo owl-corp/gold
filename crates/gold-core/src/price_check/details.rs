@@ -306,11 +306,7 @@ mod tests {
     use std::path::Path;
 
     fn data() -> GameData {
-        GameData::load(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
-            "en",
-        )
-        .unwrap()
+        GameData::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"), "en").unwrap()
     }
 
     fn id(text: &str) -> Option<DetailsId> {

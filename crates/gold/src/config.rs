@@ -13,6 +13,14 @@ pub struct Config {
     pub data_dir: Option<PathBuf>,
     /// Session cookie, only needed for searches the site restricts to logged-in users.
     pub poesessid: Option<String>,
+    /// Price listings in this currency (a trade site currency id such as "divine"); default: any.
+    pub default_currency: Option<String>,
+    /// "api" (the trade site collapses duplicate listings, default) or "app" (no collapsing).
+    pub collapse_listings: Option<String>,
+    /// Turn on the stack size filter for stacked currency items.
+    pub activate_stock_filter: bool,
+    /// Your account name; your own listings are marked in the results.
+    pub account_name: Option<String>,
 }
 
 fn config_path() -> Option<PathBuf> {

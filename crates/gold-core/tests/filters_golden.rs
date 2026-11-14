@@ -68,8 +68,6 @@ fn options() -> PresetOptions {
         currency: None,
         collapse_listings: "api",
         activate_stock_filter: false,
-        search_stat_range: 10.0,
-        use_en: false,
     }
 }
 

@@ -59,7 +59,11 @@ fn generated_items_are_priced() {
 
     let dir = std::env::temp_dir().join(format!("gold-extra-test-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("en")).unwrap();
-    std::fs::write(dir.join("en").join(gold_core::data::EXTRA_ITEMS), extra.lines.join("\n")).unwrap();
+    std::fs::write(
+        dir.join("en").join(gold_core::data::EXTRA_ITEMS),
+        extra.lines.join("\n"),
+    )
+    .unwrap();
     let data = GameData::load_with_extra(&root.join("../../assets"), Some(&dir), "en").unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 

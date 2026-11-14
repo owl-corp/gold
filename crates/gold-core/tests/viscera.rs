@@ -59,8 +59,6 @@ fn viscera_modifiers_are_parsed() {
         currency: None,
         collapse_listings: "api",
         activate_stock_filter: false,
-        search_stat_range: 10.0,
-        use_en: false,
     };
     let presets = create_presets(&data, &item, &options).unwrap();
     let preset = &presets.presets[0];

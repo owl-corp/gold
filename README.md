@@ -38,13 +38,17 @@ hl.bind("F5", hl.dsp.exec_cmd("gold ctl chat /hideout --send"), { non_consuming 
 - `gold data update` adds items the trade API lists and the shipped data lacks (new base types)
   to `$XDG_DATA_HOME/gold/data`. Restart the daemon afterwards.
 
-Config is optional, in `~/.config/gold/config.toml`:
+Searches default to instant buyout only (toggle it in the overlay). Config is optional, in `~/.config/gold/config.toml`:
 
 ```toml
 contact = "you@example.com"   # goes into the User-Agent; GGG asks API clients to identify themselves
 league = "Covens"             # default: the current challenge league
 poesessid = "..."             # optional; keep the file private (chmod 600)
 data_dir = "/path/to/data"    # default: the data shipped with the package (a dir containing en/)
+default_currency = "divine"   # price listings in one currency (trade site id); default: any
+collapse_listings = "api"     # "api" (the site hides duplicate listings) or "app" (show all)
+activate_stock_filter = false # filter stacked currency by stack size
+account_name = "Name"         # marks your own listings in the results
 ```
 
 ## Development

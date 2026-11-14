@@ -12,6 +12,8 @@ pub struct Row {
     pub detail: String,
     pub status: &'static str,
     pub who: String,
+    /// Listed by the configured account.
+    pub mine: bool,
 }
 
 #[derive(Clone, Debug)]

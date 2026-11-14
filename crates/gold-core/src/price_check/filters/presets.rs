@@ -20,6 +20,9 @@ pub struct Presets {
     pub presets: Vec<FilterPreset>,
 }
 
+/// How far stat filters are widened around the item's value, in percent.
+const SEARCH_STAT_RANGE: f64 = 10.0;
+
 #[derive(Clone, Debug)]
 pub struct PresetOptions {
     pub league: String,
@@ -27,8 +30,6 @@ pub struct PresetOptions {
     pub currency: Option<String>,
     pub collapse_listings: &'static str,
     pub activate_stock_filter: bool,
-    pub search_stat_range: f64,
-    pub use_en: bool,
 }
 
 /// An item kind whose search rules are not ported yet.
@@ -51,7 +52,6 @@ fn item_opts(opts: &PresetOptions, exact: bool) -> CreateOptions {
         collapse_listings: opts.collapse_listings,
         activate_stock_filter: opts.activate_stock_filter,
         exact,
-        use_en: opts.use_en,
     }
 }
 
@@ -70,7 +70,7 @@ pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) 
     }
 
     let cat = known(&item.category);
-    let range = opts.search_stat_range;
+    let range = SEARCH_STAT_RANGE;
     let unique = item.rarity == Some(ItemRarity::Unique);
 
     let exact_filters = |exact: bool| create_filters(data, item, &item_opts(opts, exact));

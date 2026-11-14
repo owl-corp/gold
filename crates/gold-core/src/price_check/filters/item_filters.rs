@@ -18,15 +18,10 @@ pub struct CreateOptions {
     pub collapse_listings: &'static str,
     pub activate_stock_filter: bool,
     pub exact: bool,
-    pub use_en: bool,
 }
 
-fn t(opts: &CreateOptions, info: &BaseType) -> String {
-    if opts.use_en {
-        info.ref_name.clone()
-    } else {
-        info.name.clone()
-    }
+fn t(_opts: &CreateOptions, info: &BaseType) -> String {
+    info.name.clone()
 }
 
 fn cat(item: &ParsedItem) -> Option<ItemCategory> {

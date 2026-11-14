@@ -460,8 +460,8 @@ Scope {
                                         color: Theme.textDim
                                     }
                                     StyledText {
-                                        text: listing.modelData.who
-                                        color: Theme.textDim
+                                        text: listing.modelData.who + (listing.modelData.mine ? " (you)" : "")
+                                        color: listing.modelData.mine ? Theme.yellow : Theme.textDim
                                     }
                                     StyledText {
                                         visible: listing.modelData.count > 1

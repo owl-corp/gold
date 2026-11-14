@@ -151,7 +151,7 @@ fn grouped_rows(rows: &[Row]) -> Vec<Value> {
     }
     groups
         .into_iter()
-        .map(|(r, count)| json!({ "price": r.price, "detail": r.detail, "status": r.status, "who": r.who, "count": count }))
+        .map(|(r, count)| json!({ "price": r.price, "detail": r.detail, "status": r.status, "who": r.who, "mine": r.mine, "count": count }))
         .collect()
 }
 
@@ -253,8 +253,6 @@ mod tests {
             currency: None,
             collapse_listings: "api",
             activate_stock_filter: false,
-            search_stat_range: 10.0,
-            use_en: false,
         };
         let presets = create_presets(&data, &item, &opts).unwrap().presets;
         let stats = presets[0].stats.clone();
@@ -301,6 +299,7 @@ mod tests {
             detail: String::new(),
             status: "online",
             who: who.into(),
+            mine: false,
         };
         let rows = [
             row("a", "1 divine"),

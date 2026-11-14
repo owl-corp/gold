@@ -4,6 +4,7 @@ use crate::session::Session;
 use anyhow::{Context, Result};
 use gold_core::data::GameData;
 use gold_core::leagues;
+use gold_core::price_check::filters::presets::PresetOptions;
 use gold_core::price_check::ninja::NinjaDb;
 use gold_core::price_check::trade::client::TradeClient;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -65,6 +66,27 @@ impl App {
         };
         *cached = Some(league.clone());
         Ok(league)
+    }
+
+    /// Your trade account name, to mark your own listings.
+    pub fn account_name(&self) -> Option<&str> {
+        self.config.account_name.as_deref()
+    }
+
+    /// Search defaults from the config.
+    pub fn preset_options(&self, league: String) -> PresetOptions {
+        PresetOptions {
+            league,
+            // instant buyout only; the overlay toggle switches it off per search
+            merchant_only: true,
+            currency: self.config.default_currency.clone(),
+            collapse_listings: if self.config.collapse_listings.as_deref() == Some("app") {
+                "app"
+            } else {
+                "api"
+            },
+            activate_stock_filter: self.config.activate_stock_filter,
+        }
     }
 
     /// poe.ninja prices for the league, refreshed when they get old.

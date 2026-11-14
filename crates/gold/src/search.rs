@@ -22,7 +22,7 @@ pub async fn run(app: &App, item: &ParsedItem, preset: &FilterPreset) -> Result<
     if uses_bulk(item, preset) {
         let want = item.info.trade_tag.as_deref().unwrap_or_default();
         let have = default_have(&item.info.ref_name);
-        let account = None;
+        let account = app.account_name();
         let first = exec_bulk_search(&app.trade, want, filters, &have, account).await?;
 
         let mut outcomes = Vec::new();
@@ -69,7 +69,7 @@ pub async fn fetch_rows(app: &App, query_id: &str, ids: &[String]) -> Result<Vec
     if ids.is_empty() {
         return Ok(vec![]);
     }
-    let listings = app.trade.fetch(query_id, ids, None).await?;
+    let listings = app.trade.fetch(query_id, ids, app.account_name()).await?;
     Ok(listings
         .iter()
         .map(|l| {
@@ -89,6 +89,7 @@ pub async fn fetch_rows(app: &App, query_id: &str, ids: &[String]) -> Result<Vec
                 } else {
                     l.ign.clone()
                 },
+                mine: l.is_mine,
             }
         })
         .collect())
@@ -115,6 +116,7 @@ fn bulk_outcome(search: &BulkSearch, league: &str) -> Outcome {
             } else {
                 l.ign.clone()
             },
+            mine: l.is_mine,
         })
         .collect();
     Outcome {

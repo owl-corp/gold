@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::parser::meta::{known, ItemCategory};
 use gold_core::parser::parse_clipboard;
-use gold_core::price_check::filters::presets::{create_presets, FilterPreset, PresetOptions, Unsupported};
+use gold_core::price_check::filters::presets::{create_presets, FilterPreset, Unsupported};
 use gold_core::price_check::filters::TradeFilters;
 use gold_core::price_check::trade::category_to_trade_id;
 use serde_json::Value;
@@ -95,15 +95,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     let (presets, active, note) = match app.league().await {
         Err(e) => (vec![], 0, Some(format!("No league: {e:#}"))),
         Ok(league) => {
-            let opts = PresetOptions {
-                league: league.clone(),
-                merchant_only: false,
-                currency: None,
-                collapse_listings: "api",
-                activate_stock_filter: false,
-                search_stat_range: 10.0,
-                use_en: false,
-            };
+            let opts = app.preset_options(league.clone());
             match create_presets(&app.data, &item, &opts) {
                 Ok(p) => {
                     let active = p.presets.iter().position(|x| x.id == p.active).unwrap_or(0);
@@ -361,6 +353,7 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
 mod tests {
     use super::*;
     use gold_core::data::GameData;
+    use gold_core::price_check::filters::presets::PresetOptions;
 
     fn data() -> GameData {
         GameData::load(
@@ -380,8 +373,6 @@ mod tests {
             currency: None,
             collapse_listings: "api",
             activate_stock_filter: false,
-            search_stat_range: 10.0,
-            use_en: false,
         };
         let presets = create_presets(&data, &item, &opts).unwrap();
         let active = presets.presets.iter().find(|p| p.id == presets.active).unwrap();
