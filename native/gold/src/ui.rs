@@ -1,6 +1,6 @@
 //! Newline-delimited JSON link to the Quickshell overlay.
 //! daemon -> UI: {"type":"show","view":{..}} | {"type":"hide"}
-//! UI -> daemon: {"type":"closed"}
+//! UI -> daemon: {"type":"closed"} | any other action, e.g. {"type":"toggle","index":3}
 use anyhow::Result;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -11,6 +11,7 @@ use tokio::sync::broadcast;
 pub struct Ui {
     out: broadcast::Sender<String>,
     closed: broadcast::Sender<()>,
+    actions: broadcast::Sender<serde_json::Value>,
 }
 
 impl Ui {
@@ -20,6 +21,7 @@ impl Ui {
         let ui = Ui {
             out: broadcast::channel(64).0,
             closed: broadcast::channel(8).0,
+            actions: broadcast::channel(32).0,
         };
         let me = ui.clone();
         tokio::spawn(async move {
@@ -40,6 +42,8 @@ impl Ui {
                         let msg: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
                         if msg["type"] == "closed" {
                             let _ = ui.closed.send(());
+                        } else if msg["type"].is_string() {
+                            let _ = ui.actions.send(msg);
                         }
                     }
                     writer.abort();
@@ -57,6 +61,11 @@ impl Ui {
 
     pub fn hide(&self) {
         let _ = self.out.send(r#"{"type":"hide"}"#.into());
+    }
+
+    /// Everything the overlay sends except "closed": toggles, edits, search requests.
+    pub fn actions(&self) -> broadcast::Receiver<serde_json::Value> {
+        self.actions.subscribe()
     }
 
     pub fn closed(&self) -> broadcast::Receiver<()> {

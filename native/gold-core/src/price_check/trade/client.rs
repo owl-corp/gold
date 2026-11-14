@@ -112,6 +112,7 @@ pub struct PricingResult {
 pub struct TradeClient {
     http: crate::http::Client,
     search: Rules,
+    exchange: Rules,
     fetch: Rules,
     latency: Duration,
     cache: Mutex<HashMap<String, (Instant, Value)>>,
@@ -122,6 +123,7 @@ impl TradeClient {
         TradeClient {
             http,
             search: Rules::default(),
+            exchange: Rules::default(),
             fetch: Rules::default(),
             latency: api_latency,
             cache: Mutex::new(HashMap::new()),
@@ -192,6 +194,42 @@ impl TradeClient {
         }
         self.remember(key, data.clone());
         Ok(serde_json::from_value(data)?)
+    }
+
+    /// Runs a bulk exchange search (the "Bulk Item Exchange" of the trade site).
+    pub async fn exchange(&self, body: &Value, league: &str) -> Result<Value> {
+        let key = format!("exchange:{league}:{body}");
+        if let Some(hit) = self.cached(&key) {
+            return Ok(hit);
+        }
+
+        prevent_queue_creation(&[(&self.exchange, 1)])?;
+        self.exchange.wait().await;
+
+        let mut url = reqwest::Url::parse(TRADE_HOST)?;
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("bad url"))?
+            .extend(["api", "trade", "exchange", league]);
+        let response = self
+            .http
+            .post(url)
+            .header("Accept", "application/json")
+            .json(body)
+            .send()
+            .await?;
+        self.adjust(&self.exchange, response.headers());
+
+        let status = response.status();
+        let data: Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow!("trade exchange failed (HTTP {status}): {e}"))?;
+        if let Some(err) = data.get("error").filter(|e| !e.is_null()) {
+            let err: ApiError = serde_json::from_value(err.clone())?;
+            bail!("{} (code {})", err.message, err.code);
+        }
+        self.remember(key, data.clone());
+        Ok(data)
     }
 
     /// Fetches the listings behind up to 10 result ids.

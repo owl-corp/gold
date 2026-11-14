@@ -198,6 +198,15 @@ pub fn prevent_queue_creation(targets: &[(&Rules, u32)]) -> Result<()> {
 }
 
 #[cfg(test)]
+impl Rules {
+    fn wait_sync_for_test(&self) {
+        let mut l = self.limiters.lock().unwrap();
+        let now = Instant::now();
+        l.iter_mut().for_each(|x| x.borrow(now));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -247,14 +256,5 @@ mod tests {
         let r = rules(1, 60);
         r.wait_sync_for_test();
         assert!(prevent_queue_creation(&[(&r, 1)]).is_err());
-    }
-}
-
-#[cfg(test)]
-impl Rules {
-    fn wait_sync_for_test(&self) {
-        let mut l = self.limiters.lock().unwrap();
-        let now = Instant::now();
-        l.iter_mut().for_each(|x| x.borrow(now));
     }
 }

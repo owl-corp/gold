@@ -1,13 +1,15 @@
 mod app;
 mod clipboard;
 mod config;
+mod flow;
 mod hypr;
+mod search;
+mod session;
 mod ui;
 mod view;
 
 use anyhow::{bail, Result};
 use app::App;
-use gold_core::parser::parse_clipboard;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -62,6 +64,14 @@ async fn daemon() -> Result<()> {
         }
     });
 
+    let (action_app, action_ui) = (app.clone(), ui.clone());
+    let mut actions = ui.actions();
+    tokio::spawn(async move {
+        while let Ok(action) = actions.recv().await {
+            flow::handle_action(&action_app, &action_ui, action).await;
+        }
+    });
+
     loop {
         let (stream, _) = listener.accept().await?;
         let ui = ui.clone();
@@ -83,7 +93,7 @@ async fn daemon() -> Result<()> {
 async fn handle(app: &Arc<App>, ui: &ui::Ui, cmd: &str) -> Result<String> {
     match cmd {
         "price-check" => {
-            price_check(app, ui).await?;
+            flow::price_check(app, ui).await?;
             Ok("ok".into())
         }
         "close" => {
@@ -95,45 +105,4 @@ async fn handle(app: &Arc<App>, ui: &ui::Ui, cmd: &str) -> Result<String> {
         "status" => Ok(format!("ui clients: {}", ui.clients())),
         other => bail!("unknown command: {other}"),
     }
-}
-
-async fn price_check(app: &Arc<App>, ui: &ui::Ui) -> Result<()> {
-    if ui.clients() == 0 {
-        bail!("no overlay connected (is the Quickshell overlay running?)");
-    }
-    if hypr::active_class().await? != hypr::POE_CLASS {
-        bail!("Path of Exile is not the focused window");
-    }
-    let epoch = app.next_epoch();
-    let text = clipboard::copy_item().await?;
-
-    let cursor = hypr::cursor_pos().await?;
-    let monitor = hypr::monitors().await?.into_iter().find(|m| m.focused);
-    let (mx, my, screen) = monitor.map(|m| (m.x, m.y, m.name)).unwrap_or((0, 0, String::new()));
-    let place = view::Placement {
-        screen,
-        x: cursor.x - mx,
-        y: cursor.y - my,
-    };
-
-    let item = match parse_clipboard(&app.data, &text) {
-        Ok(item) => item,
-        Err(e) => {
-            let mut lines = vec![e.code().to_string()];
-            lines.extend(text.lines().take(12).map(String::from));
-            ui.show(view::error_view(&place, "Item not recognised", lines));
-            return Ok(());
-        }
-    };
-
-    ui.show(view::item_view(&place, &item, None));
-
-    let (app, ui) = (app.clone(), ui.clone());
-    tokio::spawn(async move {
-        let ninja = app.ninja().await.map_err(|e| format!("{e:#}"));
-        if app.is_current(epoch) {
-            ui.show(view::item_view(&place, &item, Some(&ninja)));
-        }
-    });
-    Ok(())
 }

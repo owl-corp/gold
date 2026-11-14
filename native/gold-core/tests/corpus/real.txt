@@ -25,3 +25,41 @@ Regenerate 4.2(2.1-8) Life per second
 +17(15-20) to Strength
 
 =====
+Item Class: Warstaves
+Rarity: Rare
+Kraken Spell
+Military Staff
+--------
+Warstaff
+Physical Damage: 67-201 (augmented)
+Elemental Damage: 14-305 (augmented)
+Critical Strike Chance: 7.90%
+Attacks per Second: 1.25
+Weapon Range: 1.3 metres
+--------
+Requirements:
+Level: 46
+Str: 72
+Int: 72
+--------
+Sockets: W-W 
+--------
+Item Level: 63
+--------
+{ Implicit Modifier }
++22% Chance to Block Attack Damage
+--------
+{ Prefix Modifier "Infusing" (Tier: 5) — Damage, Elemental, Attack }
+51(36-51)% increased Elemental Damage with Attack Skills
+{ Prefix Modifier "Shocking" (Tier: 4) — Damage, Elemental, Lightning, Attack }
+Adds 14(14-20) to 305(281-327) Lightning Damage
+{ Master Crafted Prefix Modifier "Upgraded" (Rank: 2) — Damage, Physical, Attack }
+76(60-79)% increased Physical Damage
+{ Suffix Modifier "of Ire" (Tier: 6) — Damage, Critical }
++10(10-14)% to Global Critical Strike Multiplier
+{ Suffix Modifier "of Shining" (Tier: 2) — Attack }
+10(9-11)% increased Global Accuracy Rating
+20(16-20)% increased Light Radius
+{ Suffix Modifier "of the Gladiator" (Tier: 1) }
+15(14-15)% reduced Enemy Stun Threshold
+(The Stun Threshold determines how much Damage can Stun something)

@@ -1,5 +1,6 @@
 //! The official trade site: building searches, rate limiting, search and fetch
 //!.
+pub mod bulk;
 pub mod client;
 pub mod limits;
 pub mod request;
