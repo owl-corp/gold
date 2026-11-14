@@ -1,5 +1,5 @@
 {
-  description = "Native Wayland price check (Rust daemon + Quickshell overlay)";
+  description = "Gold: native Wayland price check for Path of Exile (Rust daemon + Quickshell overlay)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

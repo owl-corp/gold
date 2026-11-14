@@ -50,4 +50,4 @@ data_dir = "/path/to/data"    # default: the data shipped with the package
 cd native && cargo test
 ```
 
-`gold-core/tests/` checks the Rust parser, filters and trade requests against the golden files in `tests/golden` on the items in `tests/corpus`. To add items, copy them into a corpus file (`gold` logs every copied item to `~/.local/state/gold/items.log`; items are separated by a line `=====`) and add their golden entries.
+`gold-core/tests/` checks the Rust parser, filters and trade requests against the golden files in `tests/golden` on the items in `tests/corpus`. A corpus change needs hand-checked golden entries.
