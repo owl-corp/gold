@@ -6,6 +6,9 @@ license = "MIT"
 description = "Item parser, stat matching and trade logic"
 
 [dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "cookies"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+unicode-normalization = "0.1"
 anyhow = "1"
 fancy-regex = "0.14"
 regex = "1"

@@ -1,9 +1,15 @@
+mod app;
 mod clipboard;
+mod config;
 mod hypr;
 mod ui;
+mod view;
 
 use anyhow::{bail, Result};
+use app::App;
+use gold_core::parser::parse_clipboard;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -36,6 +42,7 @@ async fn main() -> Result<()> {
 }
 
 async fn daemon() -> Result<()> {
+    let app = Arc::new(App::new(config::Config::load())?);
     let ui = ui::Ui::start(runtime_dir().join("ui.sock"))?;
 
     let path = runtime_dir().join("ctl.sock");
@@ -45,8 +52,10 @@ async fn daemon() -> Result<()> {
 
     // Overlay closed by the UI (Esc, button): hand the keyboard back to the game.
     let mut closed = ui.closed();
+    let closing_app = app.clone();
     tokio::spawn(async move {
         while closed.recv().await.is_ok() {
+            closing_app.next_epoch();
             if let Err(e) = hypr::focus_game().await {
                 eprintln!("focus_game: {e:#}");
             }
@@ -56,11 +65,12 @@ async fn daemon() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         let ui = ui.clone();
+        let app = app.clone();
         tokio::spawn(async move {
             let (r, mut w) = stream.into_split();
             let mut line = String::new();
             if BufReader::new(r).read_line(&mut line).await.is_ok() {
-                let reply = match handle(&ui, line.trim()).await {
+                let reply = match handle(&app, &ui, line.trim()).await {
                     Ok(s) => s,
                     Err(e) => format!("error: {e:#}"),
                 };
@@ -70,29 +80,14 @@ async fn daemon() -> Result<()> {
     }
 }
 
-async fn handle(ui: &ui::Ui, cmd: &str) -> Result<String> {
+async fn handle(app: &Arc<App>, ui: &ui::Ui, cmd: &str) -> Result<String> {
     match cmd {
         "price-check" => {
-            if ui.clients() == 0 {
-                bail!("no overlay connected (is the Quickshell overlay running?)");
-            }
-            if hypr::active_class().await? != hypr::POE_CLASS {
-                bail!("Path of Exile is not the focused window");
-            }
-            let item = clipboard::copy_item().await?;
-            let cur = hypr::cursor_pos().await?;
-            let mon = hypr::monitors().await?.into_iter().find(|m| m.focused);
-            let (mx, my, name) = mon.map(|m| (m.x, m.y, m.name)).unwrap_or((0, 0, String::new()));
-            ui.show(serde_json::json!({
-                "title": "Copied item (raw)",
-                "screen": name,
-                "lines": item.lines().collect::<Vec<_>>(),
-                "x": cur.x - mx,
-                "y": cur.y - my,
-            }));
+            price_check(app, ui).await?;
             Ok("ok".into())
         }
         "close" => {
+            app.next_epoch();
             ui.hide();
             hypr::focus_game().await?;
             Ok("ok".into())
@@ -100,4 +95,45 @@ async fn handle(ui: &ui::Ui, cmd: &str) -> Result<String> {
         "status" => Ok(format!("ui clients: {}", ui.clients())),
         other => bail!("unknown command: {other}"),
     }
+}
+
+async fn price_check(app: &Arc<App>, ui: &ui::Ui) -> Result<()> {
+    if ui.clients() == 0 {
+        bail!("no overlay connected (is the Quickshell overlay running?)");
+    }
+    if hypr::active_class().await? != hypr::POE_CLASS {
+        bail!("Path of Exile is not the focused window");
+    }
+    let epoch = app.next_epoch();
+    let text = clipboard::copy_item().await?;
+
+    let cursor = hypr::cursor_pos().await?;
+    let monitor = hypr::monitors().await?.into_iter().find(|m| m.focused);
+    let (mx, my, screen) = monitor.map(|m| (m.x, m.y, m.name)).unwrap_or((0, 0, String::new()));
+    let place = view::Placement {
+        screen,
+        x: cursor.x - mx,
+        y: cursor.y - my,
+    };
+
+    let item = match parse_clipboard(&app.data, &text) {
+        Ok(item) => item,
+        Err(e) => {
+            let mut lines = vec![e.code().to_string()];
+            lines.extend(text.lines().take(12).map(String::from));
+            ui.show(view::error_view(&place, "Item not recognised", lines));
+            return Ok(());
+        }
+    };
+
+    ui.show(view::item_view(&place, &item, None));
+
+    let (app, ui) = (app.clone(), ui.clone());
+    tokio::spawn(async move {
+        let ninja = app.ninja().await.map_err(|e| format!("{e:#}"));
+        if app.is_current(epoch) {
+            ui.show(view::item_view(&place, &item, Some(&ninja)));
+        }
+    });
+    Ok(())
 }

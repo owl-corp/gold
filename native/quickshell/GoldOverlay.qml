@@ -12,6 +12,25 @@ Scope {
     property var view: null
     readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/gold/ui.sock"
 
+    function rarityColor(rarity) {
+        switch (rarity) {
+        case "magic": return "#8888ff";
+        case "rare": return "#ffff77";
+        case "unique": return "#af6025";
+        case "currency": return "#aa9e82";
+        default: return Theme.text;
+        }
+    }
+
+    Process {
+        id: opener
+
+        function open(url) {
+            command = ["xdg-open", url];
+            running = true;
+        }
+    }
+
     function close() {
         root.view = null;
         sock.write(JSON.stringify({ type: "closed" }) + "\n");
@@ -84,7 +103,43 @@ Scope {
                     StyledText {
                         text: root.view?.title ?? ""
                         font.bold: true
+                        font.pixelSize: Theme.fontSize + 2
+                        color: root.rarityColor(root.view?.rarity)
                     }
+                    StyledText {
+                        visible: text.length > 0
+                        text: root.view?.subtitle ?? ""
+                        color: Theme.textDim
+                    }
+
+                    // price from poe.ninja, or why there is none
+                    RowLayout {
+                        visible: root.view?.price != null
+                        spacing: 8
+
+                        StyledText {
+                            visible: root.view?.price?.amount != null
+                            text: (root.view?.price?.amount ?? "") + " " + (root.view?.price?.unit ?? "")
+                            font.bold: true
+                            color: Theme.yellow
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: opener.open(root.view.price.url)
+                            }
+                        }
+                        StyledText {
+                            visible: root.view?.price?.trendText != null
+                            text: (root.view?.price?.trend === "up" ? "▲ " : root.view?.price?.trend === "down" ? "▼ " : "± ") + (root.view?.price?.trendText ?? "")
+                            color: root.view?.price?.trend === "up" ? Theme.green : root.view?.price?.trend === "down" ? Theme.red : Theme.textDim
+                        }
+                        StyledText {
+                            visible: root.view?.price?.status != null
+                            text: root.view?.price?.status ?? ""
+                            color: Theme.textDim
+                        }
+                    }
+
                     Repeater {
                         model: root.view?.lines ?? []
                         StyledText { required property string modelData; text: modelData }
