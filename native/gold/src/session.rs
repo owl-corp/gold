@@ -21,6 +21,9 @@ pub struct Outcome {
     pub url: String,
     /// e.g. "in divine"; set only for bulk exchange searches
     pub heading: Option<String>,
+    /// For trade searches: the query id and the result ids not fetched yet ("show more").
+    pub fetch_id: Option<String>,
+    pub pending: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -44,6 +47,10 @@ pub struct Session {
     pub search_gen: u64,
     /// Why there are no filters, e.g. an item kind that is not supported yet.
     pub note: Option<String>,
+    /// Show the hidden filters that are switched off.
+    pub show_hidden: bool,
+    /// A "show more" fetch is running.
+    pub fetching_more: bool,
 }
 
 impl Session {

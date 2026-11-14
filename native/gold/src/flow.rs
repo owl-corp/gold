@@ -9,6 +9,7 @@ use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::parser::meta::{known, ItemCategory};
 use gold_core::parser::parse_clipboard;
 use gold_core::price_check::filters::presets::{create_presets, FilterPreset, PresetOptions, Unsupported};
+use gold_core::price_check::filters::TradeFilters;
 use gold_core::price_check::trade::category_to_trade_id;
 use serde_json::Value;
 use std::sync::Arc;
@@ -59,19 +60,27 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     if hypr::active_class().await? != hypr::POE_CLASS {
         bail!("Path of Exile is not the focused window");
     }
-    // The epoch moves only once the copy worked: a copy that fails or is ignored
-    // (a second press while one runs) must not invalidate the overlay already showing.
-    let text = clipboard::copy_item().await?;
-    let epoch = app.next_epoch();
-
-    let cursor = hypr::cursor_pos().await?;
-    let monitor = hypr::monitors().await?.into_iter().find(|m| m.focused);
-    let (mx, my, screen) = monitor.map(|m| (m.x, m.y, m.name)).unwrap_or((0, 0, String::new()));
-    let place = Placement {
-        screen,
-        x: cursor.x - mx,
-        y: cursor.y - my,
+    // The epoch moves only once the copy worked: a second press while one runs must not
+    // invalidate the overlay already showing.
+    let text = match clipboard::copy_item().await {
+        Ok(text) => text,
+        Err(e) if e.is::<clipboard::Busy>() => return Err(e),
+        Err(e) => {
+            // the keybind hides stdout, so say what went wrong on screen too
+            if let Ok(place) = placement().await {
+                let epoch = app.next_epoch();
+                show_standalone(
+                    app,
+                    ui,
+                    epoch,
+                    view::error_view(&place, "Copy failed", vec![format!("{e:#}")]),
+                );
+            }
+            return Err(e);
+        }
     };
+    let epoch = app.next_epoch();
+    let place = placement().await?;
 
     let item = match parse_clipboard(&app.data, &text) {
         Ok(item) => item,
@@ -123,6 +132,8 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
             search: SearchState::Idle,
             search_gen: 0,
             note,
+            show_hidden: false,
+            fetching_more: false,
         });
     }
     show(app, ui, epoch);
@@ -138,6 +149,13 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
         start_search(app, ui, epoch);
     }
     Ok(())
+}
+
+/// Where the overlay goes: on the monitor under the cursor, at the cursor.
+async fn placement() -> Result<Placement> {
+    let cursor = hypr::cursor_pos().await?;
+    let (screen, x, y) = hypr::locate(hypr::monitors().await?, &cursor).unwrap_or((String::new(), cursor.x, cursor.y));
+    Ok(Placement { screen, x, y })
 }
 
 /// Whether the search starts by itself when the overlay opens (`smartInitialSearch`).
@@ -180,6 +198,80 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
                     Ok(groups) => SearchState::Done(groups),
                     Err(e) => SearchState::Failed(format!("{e:#}")),
                 }
+            }
+        });
+        show(&app, &ui, epoch);
+    });
+}
+
+/// The "listed" choices of the trade site, shortest first.
+const LISTED: [&str; 6] = ["1day", "3days", "1week", "2weeks", "1month", "2months"];
+
+/// Flips or cycles one trade filter. Returns whether it changed.
+fn apply_trade_filter(t: &mut TradeFilters, key: &str) -> bool {
+    match key {
+        "offline" => t.offline = !t.offline,
+        "merchantOnly" => t.merchant_only = !t.merchant_only,
+        "listed" => {
+            // any -> 1 day -> ... -> 2 months -> any
+            let next = match t.listed.as_deref().and_then(|l| LISTED.iter().position(|x| *x == l)) {
+                None => Some(LISTED[0]),
+                Some(i) => LISTED.get(i + 1).copied(),
+            };
+            t.listed = next.map(String::from);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Fetches the next listings of the first trade search and appends them.
+fn more(app: &Arc<App>, ui: &Ui, epoch: u64) {
+    let snapshot = {
+        let mut guard = app.session.lock().unwrap();
+        let Some(s) = guard.as_mut().filter(|s| s.epoch == epoch) else {
+            return;
+        };
+        if s.fetching_more {
+            return;
+        }
+        let SearchState::Done(groups) = &s.search else { return };
+        let Some((id, ids)) = groups.iter().find_map(|g| {
+            let id = g.fetch_id.clone()?;
+            (!g.pending.is_empty()).then(|| {
+                (
+                    id,
+                    g.pending.iter().take(search::MORE_ROWS).cloned().collect::<Vec<_>>(),
+                )
+            })
+        }) else {
+            return;
+        };
+        s.fetching_more = true;
+        (id, ids, s.search_gen)
+    };
+    show(app, ui, epoch);
+
+    let (app, ui) = (app.clone(), ui.clone());
+    tokio::spawn(async move {
+        let (id, ids, generation) = snapshot;
+        let result = search::fetch_rows(&app, &id, &ids).await;
+        update(&app, epoch, |s| {
+            // filters changed or a new search started meanwhile: this result belongs to the old one
+            if s.search_gen != generation {
+                return;
+            }
+            s.fetching_more = false;
+            match result {
+                Ok(rows) => {
+                    if let SearchState::Done(groups) = &mut s.search {
+                        if let Some(g) = groups.iter_mut().find(|g| g.fetch_id.as_deref() == Some(&id)) {
+                            g.pending.drain(..ids.len().min(g.pending.len()));
+                            g.rows.extend(rows);
+                        }
+                    }
+                }
+                Err(e) => s.search = SearchState::Failed(format!("{e:#}")),
             }
         });
         show(&app, &ui, epoch);
@@ -237,6 +329,30 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
             show(app, ui, epoch);
         }
         "search" => start_search(app, ui, epoch),
+        "hidden" => {
+            update(app, epoch, |s| s.show_hidden = !s.show_hidden);
+            show(app, ui, epoch);
+        }
+        "more" => more(app, ui, epoch),
+        "trade" => {
+            // a changed trade filter re-runs the search, if the user had run one
+            let rerun = update(app, epoch, |s| {
+                let had_search = !matches!(s.search, SearchState::Idle);
+                let changed = s
+                    .preset_mut()
+                    .is_some_and(|p| apply_trade_filter(&mut p.filters.trade, action["key"].as_str().unwrap_or("")));
+                if changed {
+                    s.search = SearchState::Idle;
+                    s.search_gen += 1;
+                    s.fetching_more = false;
+                }
+                changed && had_search
+            });
+            show(app, ui, epoch);
+            if rerun == Some(true) {
+                start_search(app, ui, epoch);
+            }
+        }
         _ => {}
     }
 }

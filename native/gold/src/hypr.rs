@@ -35,6 +35,50 @@ pub struct Monitor {
     pub x: i32,
     pub y: i32,
     pub focused: bool,
+    #[serde(default)]
+    pub width: i32,
+    #[serde(default)]
+    pub height: i32,
+    #[serde(default = "one")]
+    pub scale: f64,
+    /// Wayland transform: odd values (90/270 degrees, flipped or not) swap width and height.
+    #[serde(default)]
+    pub transform: i32,
+}
+
+fn one() -> f64 {
+    1.0
+}
+
+impl Monitor {
+    /// Size in layout pixels (after scale and rotation).
+    fn layout_size(&self) -> (f64, f64) {
+        let (w, h) = if self.transform % 2 != 0 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        let scale = if self.scale > 0.0 { self.scale } else { 1.0 };
+        (f64::from(w) / scale, f64::from(h) / scale)
+    }
+
+    fn contains(&self, x: i32, y: i32) -> bool {
+        let (w, h) = self.layout_size();
+        x >= self.x && y >= self.y && f64::from(x - self.x) < w && f64::from(y - self.y) < h
+    }
+}
+
+/// The monitor under the cursor (else the focused one, else the first), and the cursor
+/// position inside it in that monitor's logical pixels, which is what a layer surface uses.
+pub fn locate(monitors: Vec<Monitor>, cursor: &Cursor) -> Option<(String, i32, i32)> {
+    let m = monitors
+        .iter()
+        .position(|m| m.contains(cursor.x, cursor.y))
+        .or_else(|| monitors.iter().position(|m| m.focused))
+        .or(if monitors.is_empty() { None } else { Some(0) })?;
+    let m = &monitors[m];
+    // the cursor is in layout coordinates, which are already logical, so no scaling is needed
+    Some((m.name.clone(), cursor.x - m.x, cursor.y - m.y))
 }
 
 pub async fn cursor_pos() -> Result<Cursor> {
@@ -105,4 +149,46 @@ pub async fn focus_game() -> Result<()> {
         return Ok(());
     }
     dispatch(&format!(r#"hl.dsp.focus({{ window = "{GAME_WINDOW}" }})"#)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mon(name: &str, x: i32, w: i32, h: i32, scale: f64, transform: i32) -> Monitor {
+        Monitor {
+            name: name.into(),
+            x,
+            y: 0,
+            focused: name == "A",
+            width: w,
+            height: h,
+            scale,
+            transform,
+        }
+    }
+
+    #[test]
+    fn cursor_picks_its_monitor_with_scale_and_rotation() {
+        // A: 2560x1440 at 0; B: 1920x1080 rotated, at x=2560, so 1080 wide and 1920 tall;
+        // C: 3840x2160 at scale 2 (1920x1080 in the layout), at x=3640
+        let ms = || {
+            vec![
+                mon("A", 0, 2560, 1440, 1.0, 0),
+                mon("B", 2560, 1920, 1080, 1.0, 1),
+                mon("C", 3640, 3840, 2160, 2.0, 0),
+            ]
+        };
+        assert_eq!(locate(ms(), &Cursor { x: 100, y: 50 }).unwrap(), ("A".into(), 100, 50));
+        assert_eq!(
+            locate(ms(), &Cursor { x: 2600, y: 1800 }).unwrap(),
+            ("B".into(), 40, 1800)
+        );
+        assert_eq!(
+            locate(ms(), &Cursor { x: 4000, y: 1000 }).unwrap(),
+            ("C".into(), 360, 1000)
+        );
+        // outside everything: the focused monitor
+        assert_eq!(locate(ms(), &Cursor { x: 9000, y: 9000 }).unwrap().0, "A");
+    }
 }

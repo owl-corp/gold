@@ -10,6 +10,14 @@ Scope {
     id: root
 
     property var view: null
+    // The lists below only change when their content does, so a row being edited
+    // keeps its focus and typed text while a search result arrives.
+    property var filterRows: []
+    property var presetRows: []
+    property var noteLines: []
+    property var groups: []
+    // a value box has keyboard focus: do not close the panel under the user's hands
+    property bool editing: false
     // epoch of the view the user last closed; a late view for it must not reopen the panel
     property var closedEpoch: null
     readonly property string socketPath: Quickshell.env("XDG_RUNTIME_DIR") + "/gold/ui.sock"
@@ -26,6 +34,18 @@ Scope {
 
     function statusColor(status) {
         return status === "online" ? Theme.green : status === "afk" ? Theme.yellow : Theme.textDim;
+    }
+
+    function keep(name, value) {
+        if (JSON.stringify(root[name]) !== JSON.stringify(value)) root[name] = value;
+    }
+
+    onViewChanged: {
+        keep("filterRows", view?.filters ?? []);
+        keep("presetRows", view?.presets ?? []);
+        keep("noteLines", view?.lines ?? []);
+        keep("groups", view?.trade?.state === "done" ? view.trade.groups : []);
+        if (view === null) editing = false;
     }
 
     function send(action) {
@@ -116,6 +136,27 @@ Scope {
 
                 Keys.onEscapePressed: root.close()
 
+                // Close shortly after the pointer leaves. Only once it has been
+                // inside (the panel opens under the cursor, but not always), and never while typing.
+                property bool entered: false
+
+                HoverHandler {
+                    id: hover
+
+                    onHoveredChanged: {
+                        if (hovered) {
+                            panel.entered = true;
+                            leaveTimer.stop();
+                        } else if (panel.entered) leaveTimer.restart();
+                    }
+                }
+                Timer {
+                    id: leaveTimer
+
+                    interval: 800
+                    onTriggered: if (!hover.hovered && !root.editing) root.close()
+                }
+
                 ColumnLayout {
                     id: col
 
@@ -163,7 +204,7 @@ Scope {
                     }
 
                     Repeater {
-                        model: root.view?.lines ?? []
+                        model: root.noteLines
                         StyledText { required property string modelData; text: modelData; color: Theme.textDim }
                     }
 
@@ -173,7 +214,7 @@ Scope {
                         spacing: 10
 
                         Repeater {
-                            model: root.view?.presets ?? []
+                            model: root.presetRows
 
                             StyledText {
                                 required property var modelData
@@ -184,7 +225,7 @@ Scope {
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.send({ type: "preset", index: modelData.index })
+                                    onClicked: { panel.forceActiveFocus(); root.send({ type: "preset", index: modelData.index }); }
                                 }
                             }
                         }
@@ -192,7 +233,7 @@ Scope {
 
                     // one row per stat filter
                     Repeater {
-                        model: root.view?.filters ?? []
+                        model: root.filterRows
 
                         RowLayout {
                             id: row
@@ -210,7 +251,7 @@ Scope {
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.send({ type: "toggle", index: row.modelData.index })
+                                    onClicked: { panel.forceActiveFocus(); root.send({ type: "toggle", index: row.modelData.index }); }
                                 }
                             }
                             StyledText {
@@ -245,6 +286,10 @@ Scope {
                                         selectByMouse: true
                                         text: row.modelData[box.modelData] != null ? String(row.modelData[box.modelData]) : ""
                                         Keys.onEscapePressed: root.close()
+                                        onActiveFocusChanged: {
+                                            root.editing = activeFocus;
+                                            if (!activeFocus && !hover.hovered && panel.entered) leaveTimer.restart();
+                                        }
                                         onEditingFinished: {
                                             const other = box.modelData === "min" ? "max" : "min";
                                             const edited = root.parseNumber(text);
@@ -266,6 +311,48 @@ Scope {
                                         color: Theme.textDim
                                         font.pixelSize: Theme.fontSize - 2
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    StyledText {
+                        visible: (root.view?.hiddenCount ?? 0) > 0 || root.view?.showHidden === true
+                        text: root.view?.showHidden ? "hide unused filters" : "show " + root.view?.hiddenCount + " hidden filters"
+                        color: Theme.blue
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: { panel.forceActiveFocus(); root.send({ type: "hidden" }); }
+                        }
+                    }
+
+                    // how the trade search is made; changing one runs the search again
+                    RowLayout {
+                        visible: root.view?.tradeFilters != null && (root.view?.presets?.length ?? 0) > 0
+                        spacing: 10
+
+                        Repeater {
+                            model: {
+                                const t = root.view?.tradeFilters;
+                                if (!t) return [];
+                                const listed = { "1day": "1 day", "3days": "3 days", "1week": "1 week", "2weeks": "2 weeks", "1month": "1 month", "2months": "2 months" };
+                                return [
+                                    { key: "offline", text: t.offline ? "online + offline" : "online only", on: t.offline },
+                                    { key: "merchantOnly", text: "instant buyout", on: t.merchantOnly },
+                                    { key: "listed", text: "listed: " + (listed[t.listed] ?? "any time"), on: t.listed != null }
+                                ];
+                            }
+
+                            StyledText {
+                                required property var modelData
+
+                                text: modelData.text
+                                color: modelData.on ? Theme.accent : Theme.textDim
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: { panel.forceActiveFocus(); root.send({ type: "trade", key: modelData.key }); }
                                 }
                             }
                         }
@@ -313,7 +400,7 @@ Scope {
 
                     // results
                     Repeater {
-                        model: root.view?.trade?.state === "done" ? root.view.trade.groups : []
+                        model: root.groups
 
                         ColumnLayout {
                             id: group
@@ -345,6 +432,8 @@ Scope {
                                 color: Theme.textDim
                             }
                             Repeater {
+                                id: listingRows
+
                                 model: group.modelData.rows
 
                                 RowLayout {
@@ -374,6 +463,22 @@ Scope {
                                         text: listing.modelData.who
                                         color: Theme.textDim
                                     }
+                                    StyledText {
+                                        visible: listing.modelData.count > 1
+                                        text: "×" + listing.modelData.count
+                                        color: Theme.text
+                                    }
+                                }
+                            }
+                            StyledText {
+                                visible: group.modelData.more === true
+                                text: group.modelData.fetchingMore ? "Loading…" : "show more"
+                                color: Theme.blue
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: !group.modelData.fetchingMore
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: { panel.forceActiveFocus(); root.send({ type: "more" }); }
                                 }
                             }
                         }

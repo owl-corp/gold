@@ -2,7 +2,7 @@
 //! Uses wl-clipboard so no
 //! background clipboard server has to live inside this process.
 use crate::hypr;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
@@ -38,6 +38,18 @@ const POLL_LIMIT: Duration = Duration::from_millis(500);
 /// Held while the clipboard and the game's keys are in use, by a copy or a chat command.
 /// A second press while one runs is rejected, and two flows never interleave key presses.
 pub static BUSY: Mutex<()> = Mutex::const_new(());
+
+/// A copy or chat command is already running. Not worth showing to the user.
+#[derive(Debug)]
+pub struct Busy;
+
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a copy is already in progress")
+    }
+}
+
+impl std::error::Error for Busy {}
 
 fn is_item(text: &str) -> bool {
     text.starts_with("Item Class: ")
@@ -92,7 +104,7 @@ async fn clear() -> Result<()> {
 
 /// Copy the item under the cursor in the game and return its text.
 pub async fn copy_item() -> Result<String> {
-    let _guard = BUSY.try_lock().map_err(|_| anyhow!("a copy is already in progress"))?;
+    let _guard = BUSY.try_lock().map_err(|_| anyhow::Error::new(Busy))?;
 
     // Keep what the user had on the clipboard, unless it is an old item.
     let before = read().await.filter(|t| !is_item(t));

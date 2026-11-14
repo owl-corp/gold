@@ -47,14 +47,30 @@ pub async fn run(app: &App, item: &ParsedItem, preset: &FilterPreset) -> Result<
 
     let request = create_trade_request(&app.data, filters, &preset.stats)?;
     let found = app.trade.search(&request, league).await?;
-    let ids: Vec<String> = found.result.iter().take(SHOW_ROWS).cloned().collect();
-    let listings = if ids.is_empty() {
-        vec![]
-    } else {
-        app.trade.fetch(&found.id, &ids, None).await?
-    };
+    let rows = fetch_rows(app, &found.id, found.result.get(..SHOW_ROWS).unwrap_or(&found.result)).await?;
+    let pending = found.result.get(SHOW_ROWS..).unwrap_or_default().to_vec();
 
-    let rows = listings
+    Ok(vec![Outcome {
+        fetch_id: Some(found.id.clone()),
+        pending,
+        total: found.total,
+        rows,
+        url: format!(
+            "https://www.pathofexile.com/trade/search/{}/{}",
+            url_part(league),
+            found.id
+        ),
+        heading: None,
+    }])
+}
+
+/// Fetches the listings for these result ids (at most 10 per request).
+pub async fn fetch_rows(app: &App, query_id: &str, ids: &[String]) -> Result<Vec<Row>> {
+    if ids.is_empty() {
+        return Ok(vec![]);
+    }
+    let listings = app.trade.fetch(query_id, ids, None).await?;
+    Ok(listings
         .iter()
         .map(|l| {
             let mut detail = vec![l.relative_date.clone()];
@@ -75,19 +91,11 @@ pub async fn run(app: &App, item: &ParsedItem, preset: &FilterPreset) -> Result<
                 },
             }
         })
-        .collect();
-
-    Ok(vec![Outcome {
-        total: found.total,
-        rows,
-        url: format!(
-            "https://www.pathofexile.com/trade/search/{}/{}",
-            url_part(league),
-            found.id
-        ),
-        heading: None,
-    }])
+        .collect())
 }
+
+/// How many more listings one "show more" fetches.
+pub const MORE_ROWS: usize = SHOW_ROWS;
 
 fn bulk_outcome(search: &BulkSearch, league: &str) -> Outcome {
     let rows = search
@@ -118,6 +126,8 @@ fn bulk_outcome(search: &BulkSearch, league: &str) -> Outcome {
             search.query_id
         ),
         heading: Some(format!("in {}", search.have_tag)),
+        fetch_id: None,
+        pending: vec![],
     }
 }
 

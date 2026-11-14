@@ -1,5 +1,5 @@
 //! What the overlay shows. The QML renders this JSON as it is and keeps no state.
-use crate::session::{SearchState, Session};
+use crate::session::{Row, SearchState, Session};
 use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::price_check::details::{get_details_id, is_valuable_basetype};
 use gold_core::price_check::filters::util::round_roll;
@@ -60,7 +60,7 @@ pub fn render(s: &Session) -> Value {
                 .iter()
                 .enumerate()
                 // hidden filters that are switched on still shape the search, so they stay visible
-                .filter(|(_, f)| f.hidden.is_none() || !f.disabled)
+                .filter(|(_, f)| s.show_hidden || f.hidden.is_none() || !f.disabled)
                 .map(|(i, f)| {
                     let value = f.roll.as_ref().map(|r| r.value);
                     let text = match value {
@@ -85,6 +85,15 @@ pub fn render(s: &Session) -> Value {
         })
         .unwrap_or_default();
 
+    let hidden_count = s
+        .preset()
+        .map(|p| p.stats.iter().filter(|f| f.hidden.is_some() && f.disabled).count())
+        .unwrap_or(0);
+    let trade_filters = s.preset().map(|p| {
+        let t = &p.filters.trade;
+        json!({ "offline": t.offline, "merchantOnly": t.merchant_only, "listed": t.listed, "currency": t.currency })
+    });
+
     let presets: Vec<Value> = s
         .presets
         .iter()
@@ -102,9 +111,9 @@ pub fn render(s: &Session) -> Value {
                 "heading": g.heading,
                 "total": g.total,
                 "url": g.url,
-                "rows": g.rows.iter().map(|r| json!({
-                    "price": r.price, "detail": r.detail, "status": r.status, "who": r.who,
-                })).collect::<Vec<_>>(),
+                "rows": grouped_rows(&g.rows),
+                "more": g.fetch_id.is_some() && !g.pending.is_empty(),
+                "fetchingMore": s.fetching_more,
             })).collect::<Vec<_>>(),
         }),
     };
@@ -119,10 +128,31 @@ pub fn render(s: &Session) -> Value {
             "price": price,
             "presets": presets,
             "filters": filters,
+            "hiddenCount": hidden_count,
+            "showHidden": s.show_hidden,
+            "tradeFilters": trade_filters,
             "trade": trade,
             "lines": s.note.iter().cloned().chain(item.unknown_modifiers.iter().map(|m| format!("? {}", m.text))).collect::<Vec<_>>(),
         }),
     )
+}
+
+/// Listings from the same seller at the same price are one row with a count.
+fn grouped_rows(rows: &[Row]) -> Vec<Value> {
+    let mut groups: Vec<(&Row, u32)> = Vec::new();
+    for r in rows {
+        match groups
+            .iter_mut()
+            .find(|(g, _)| g.who == r.who && g.price == r.price && g.status == r.status)
+        {
+            Some((_, n)) => *n += 1,
+            None => groups.push((r, 1)),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(r, count)| json!({ "price": r.price, "detail": r.detail, "status": r.status, "who": r.who, "count": count }))
+        .collect()
 }
 
 fn preset_name(id: &str) -> &'static str {
@@ -200,6 +230,8 @@ mod tests {
             search: SearchState::Idle,
             search_gen: 0,
             note: None,
+            show_hidden: false,
+            fetching_more: false,
         })
     }
 
@@ -240,6 +272,8 @@ mod tests {
             search: SearchState::Idle,
             search_gen: 0,
             note: None,
+            show_hidden: false,
+            fetching_more: false,
         });
 
         assert_eq!(v["epoch"], 7);
@@ -258,6 +292,28 @@ mod tests {
             .unwrap();
         assert_eq!(life["on"], true);
         assert_eq!(life["editable"], true);
+    }
+
+    #[test]
+    fn same_seller_and_price_collapse_into_one_counted_row() {
+        let row = |who: &str, price: &str| Row {
+            price: price.into(),
+            detail: String::new(),
+            status: "online",
+            who: who.into(),
+        };
+        let rows = [
+            row("a", "1 divine"),
+            row("b", "1 divine"),
+            row("a", "1 divine"),
+            row("a", "2 divine"),
+        ];
+        let g = grouped_rows(&rows);
+        let counts: Vec<_> = g
+            .iter()
+            .map(|r| (r["who"].as_str().unwrap(), r["count"].as_u64().unwrap()))
+            .collect();
+        assert_eq!(counts, [("a", 2), ("b", 1), ("a", 1)]);
     }
 
     #[test]
