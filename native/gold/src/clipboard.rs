@@ -7,6 +7,26 @@ use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+/// `wl-copy`/`wl-paste` need `WAYLAND_DISPLAY`, which a systemd user service may not have;
+/// fall back to the first Wayland socket in the runtime directory.
+fn wl_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        let socket = std::env::var_os("XDG_RUNTIME_DIR")
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.file_name())
+            .filter(|n| n.to_str().is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock")))
+            .min();
+        if let Some(socket) = socket {
+            cmd.env("WAYLAND_DISPLAY", socket);
+        }
+    }
+    cmd
+}
 use tokio::sync::Mutex;
 
 const POLL_DELAY: Duration = Duration::from_millis(48);
@@ -36,7 +56,7 @@ pub async fn write_text(text: &str) -> Result<()> {
 }
 
 async fn read() -> Option<String> {
-    let out = Command::new("wl-paste")
+    let out = wl_command("wl-paste")
         .args(["--no-newline", "--type", "text"])
         .output()
         .await
@@ -47,7 +67,7 @@ async fn read() -> Option<String> {
 }
 
 async fn write(text: &str) -> Result<()> {
-    let mut child = Command::new("wl-copy")
+    let mut child = wl_command("wl-copy")
         .stdin(Stdio::piped())
         .spawn()
         .context("wl-copy not found")?;
@@ -62,7 +82,7 @@ async fn write(text: &str) -> Result<()> {
 }
 
 async fn clear() -> Result<()> {
-    Command::new("wl-copy").arg("--clear").status().await?;
+    wl_command("wl-copy").arg("--clear").status().await?;
     Ok(())
 }
 
