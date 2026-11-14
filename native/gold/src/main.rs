@@ -21,7 +21,11 @@ use tokio::sync::broadcast;
 /// next to the installed one. `gold ctl` talks to a running dev daemon first, so the keybinds follow it.
 fn runtime_dir() -> PathBuf {
     let rt = std::env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR not set");
-    let d = PathBuf::from(rt).join(if std::env::var_os("GOLD_DEV").is_some() { "gold-dev" } else { "gold" });
+    let d = PathBuf::from(rt).join(if std::env::var_os("GOLD_DEV").is_some() {
+        "gold-dev"
+    } else {
+        "gold"
+    });
     std::fs::create_dir_all(&d).ok();
     d
 }
