@@ -5,6 +5,7 @@
 #![allow(clippy::neg_multiply, clippy::type_complexity, clippy::if_same_then_else)]
 pub mod client_strings;
 pub mod data;
+pub mod data_update;
 pub mod http;
 pub mod js;
 pub mod leagues;

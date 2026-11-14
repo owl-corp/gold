@@ -346,6 +346,20 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
         d.items.by_translated("ITEM", &base_or_name)
     };
 
+    // Viscera names carry a tier prefix ("Lesser Crustacean's Claw") that
+    // neither the data nor the trade API has, so look the name up again without its first word.
+    let is_viscera = item
+        .raw_text
+        .lines()
+        .next()
+        .and_then(|l| after(l, &d.cs.ITEM_CLASS))
+        .is_some_and(|class| class == "Viscera");
+    if is_viscera && info.as_ref().is_none_or(Vec::is_empty) {
+        if let Some((_, rest)) = base_or_name.split_once(' ') {
+            info = d.items.by_translated("ITEM", rest);
+        }
+    }
+
     let infos = match info.as_mut() {
         Some(v) if !v.is_empty() => v,
         _ => return Err(UnknownItem.into()),
@@ -371,6 +385,10 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
     if item.category.is_none() {
         if let Some(c) = &item.info.craftable {
             item.category = Some(c.category.clone());
+            // Viscera have no "Rarity:" line, and without a rarity no modifier is read
+            if item.rarity.is_none() && matches!(&c.category, Category::Other(o) if o == "Viscera") {
+                item.rarity = Some(ItemRarity::Normal);
+            }
         } else if let Some(u) = &item.info.unique {
             let base = d
                 .items

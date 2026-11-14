@@ -70,6 +70,14 @@ impl Config {
     }
 }
 
+/// Where `gold data update` writes the extra data: `$XDG_DATA_HOME/gold/data`.
+pub fn extra_data_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
+    Some(base.join("gold/data"))
+}
+
 fn is_readable_by_others(path: &std::path::Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o077 != 0)

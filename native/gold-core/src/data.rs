@@ -384,17 +384,35 @@ pub struct GameData {
 impl GameData {
     /// Loads `<data_dir>/<lang>/{client_strings.js,items.ndjson,stats.ndjson}`.
     pub fn load(data_dir: &Path, lang: &str) -> Result<Self> {
+        Self::load_with_extra(data_dir, None, lang)
+    }
+
+    /// Like `load`, plus the items in `<extra_dir>/<lang>/items.extra.ndjson` (see
+    /// `data_update`) when that file exists. Shipped items come first, so they win on a clash.
+    pub fn load_with_extra(data_dir: &Path, extra_dir: Option<&Path>, lang: &str) -> Result<Self> {
         let dir = data_dir.join(lang);
         let read = |name: &str| {
             std::fs::read_to_string(dir.join(name)).with_context(|| format!("reading {}/{name}", dir.display()))
         };
+        let mut items = read("items.ndjson")?;
+        if let Some(extra) = extra_dir.map(|d| d.join(lang).join(EXTRA_ITEMS)) {
+            if let Ok(text) = std::fs::read_to_string(&extra) {
+                if !items.ends_with('\n') {
+                    items.push('\n');
+                }
+                items.push_str(&text);
+            }
+        }
         Ok(GameData {
             cs: ClientStrings::parse(&read("client_strings.js")?)?,
-            items: ItemDb::parse(&read("items.ndjson")?)?,
+            items: ItemDb::parse(&items)?,
             stats: StatDb::parse(&read("stats.ndjson")?)?,
         })
     }
 }
+
+/// File name of the generated extra items inside `<extra_dir>/<lang>/`.
+pub const EXTRA_ITEMS: &str = "items.extra.ndjson";
 
 #[cfg(test)]
 mod tests {

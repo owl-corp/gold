@@ -25,7 +25,8 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Result<Self> {
         let dir = config.data_dir();
-        let data = GameData::load(&dir, "en").with_context(|| format!("loading game data from {}", dir.display()))?;
+        let data = GameData::load_with_extra(&dir, crate::config::extra_data_dir().as_deref(), "en")
+            .with_context(|| format!("loading game data from {}", dir.display()))?;
         let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
         let client = gold_core::http::client(&contact, config.poesessid.as_deref())?;
         let trade = TradeClient::new(client.clone(), std::time::Duration::from_secs(2));

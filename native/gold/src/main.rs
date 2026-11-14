@@ -56,8 +56,43 @@ async fn main() -> Result<()> {
             print!("{reply}");
             Ok(())
         }
-        _ => bail!("usage: gold <daemon|ctl ...>"),
+        Some("data") if args.next().as_deref() == Some("update") => update_data().await,
+        _ => bail!("usage: gold <daemon|ctl ...|data update>"),
     }
+}
+
+/// `gold data update`: add the items the trade API lists and the shipped data lacks.
+async fn update_data() -> Result<()> {
+    use gold_core::data_update::extra_items;
+    let config = config::Config::load();
+    let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
+    let client = gold_core::http::client(&contact, None)?;
+    let body = client
+        .get("https://www.pathofexile.com/api/trade/data/items")
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+    let shipped = std::fs::read_to_string(config.data_dir().join("en/items.ndjson"))?;
+    let extra = extra_items(&body, &shipped)?;
+
+    let dir = config::extra_data_dir()
+        .ok_or_else(|| anyhow::anyhow!("no HOME or XDG_DATA_HOME"))?
+        .join("en");
+    std::fs::create_dir_all(&dir)?;
+    let target = dir.join(gold_core::data::EXTRA_ITEMS);
+    let tmp = dir.join(format!("{}.tmp", gold_core::data::EXTRA_ITEMS));
+    std::fs::write(&tmp, extra.lines.iter().map(|l| format!("{l}\n")).collect::<String>())?;
+    std::fs::rename(&tmp, &target)?;
+    println!(
+        "{}: {} base items, {} uniques ({} uniques skipped, base type unknown). Restart the daemon to load them.",
+        target.display(),
+        extra.bases,
+        extra.uniques,
+        extra.skipped_uniques
+    );
+    Ok(())
 }
 
 async fn daemon() -> Result<()> {
