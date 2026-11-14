@@ -67,15 +67,15 @@ async fn update_data() -> Result<()> {
     let config = config::Config::load();
     let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
     let client = gold_core::http::client(&contact, None)?;
-    let body = client
-        .get("https://www.pathofexile.com/api/trade/data/items")
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+    let fetch = |what: &str| {
+        client
+            .get(format!("https://www.pathofexile.com/api/trade/data/{what}"))
+            .send()
+    };
+    let body = fetch("items").await?.error_for_status()?.text().await?;
+    let statics = fetch("static").await?.error_for_status()?.text().await?;
     let shipped = std::fs::read_to_string(config.data_dir().join("en/items.ndjson"))?;
-    let extra = extra_items(&body, &shipped)?;
+    let extra = extra_items(&body, &statics, &shipped)?;
 
     let dir = config::extra_data_dir()
         .ok_or_else(|| anyhow::anyhow!("no HOME or XDG_DATA_HOME"))?
@@ -86,11 +86,12 @@ async fn update_data() -> Result<()> {
     std::fs::write(&tmp, extra.lines.iter().map(|l| format!("{l}\n")).collect::<String>())?;
     std::fs::rename(&tmp, &target)?;
     println!(
-        "{}: {} base items, {} uniques ({} uniques skipped, base type unknown). Restart the daemon to load them.",
+        "{}: {} items, {} uniques ({} uniques skipped, base type unknown; {} entries of unmapped groups). Restart the daemon to load them.",
         target.display(),
         extra.bases,
         extra.uniques,
-        extra.skipped_uniques
+        extra.skipped_uniques,
+        extra.unmapped
     );
     Ok(())
 }
