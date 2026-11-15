@@ -201,6 +201,8 @@ fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
         let v = auto_currency(chaos, if is_divine { None } else { rate });
         match v.currency {
             Currency::Chaos if is_divine => (display_rounding(chaos, false), "c"),
+            // under 0.1c rounding shows 0 or a coarse 0.1: say how many a chaos buys
+            Currency::Chaos if v.min > 0.0 && v.min < 0.1 => (display_rounding(1.0 / v.min, false), "per c"),
             Currency::Chaos => (display_rounding(v.min, false), "c"),
             Currency::Div => (display_rounding(v.min, false), "div"),
         }
