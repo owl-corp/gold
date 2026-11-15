@@ -136,6 +136,17 @@ pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Resul
         known.insert((k.namespace, k.name));
     }
 
+    // bases this update adds count too, or a unique on a brand-new base would be skipped
+    for g in response
+        .result
+        .iter()
+        .filter(|g| GROUPS.iter().any(|(id, _)| *id == g.id))
+    {
+        for e in g.entries.iter().filter(|e| e.name.is_none() && e.disc.is_none()) {
+            bases.insert(e.base.clone());
+        }
+    }
+
     // name -> (group, id, image); the first group wins, as in the shipped data
     let mut by_text: HashMap<&str, (&str, &str, Option<&str>)> = HashMap::new();
     for g in &statics.result {
@@ -547,6 +558,13 @@ mod tests {
         let v = &records(&extra)[0];
         assert_eq!(v["name"], "Angler's Plait");
         assert_eq!(v["unique"]["base"], "Coral Ring");
+    }
+
+    #[test]
+    fn adds_uniques_on_a_base_added_by_the_same_update() {
+        let json = r#"{"type":"New Jewel"},{"type":"New Jewel","name":"Fresh Unique"}"#;
+        let extra = extra(json, "jewel");
+        assert_eq!((extra.uniques, extra.skipped_uniques), (1, 0));
     }
 
     #[test]
