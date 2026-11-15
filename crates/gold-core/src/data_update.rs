@@ -6,7 +6,7 @@
 //! maps onto one shape of shipped record:
 //! - `card` -> `DIVINATION_CARD`, `monster` -> `CAPTURED_BEAST`, `gem` -> `GEM`;
 //! - `viscera`, `jewel`, `enshrouded` -> `ITEM` with a craftable category;
-//! - `currency`, `map` (fragments, scarabs...), `leaguestone`, `graft`, `wombgift`,
+//! - `currency`, `map` (fragments...), `leaguestone`, `graft`, `wombgift`,
 //!   `sanctum` -> plain `ITEM`;
 //! - uniques, when their base type is already known.
 //!

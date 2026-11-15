@@ -453,9 +453,6 @@ fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<
         } else if let Some(v) = after(line, &cs.MAP_MORE_MAPS) {
             item.map_more_maps = Some(js::parse_int(v));
             result = Parsed;
-        } else if let Some(v) = after(line, &cs.MAP_MORE_SCARABS) {
-            item.map_more_scarabs = Some(js::parse_int(v));
-            result = Parsed;
         } else if let Some(v) = after(line, &cs.MAP_MORE_CURRENCY) {
             item.map_more_currency = Some(js::parse_int(v));
             result = Parsed;

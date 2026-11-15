@@ -766,7 +766,6 @@
     "query": [
       "ITEM::Orb of Fusing",
       "ITEM::Omen of Connections",
-      "ITEM::Bestiary Scarab of the Shadowed Crow",
       "CAPTURED_BEAST::Black Mórrigan",
       "CAPTURED_BEAST::Craicic Sand Spitter"
     ],
@@ -1259,20 +1258,6 @@
     ],
     "items": [
       "UNIQUE::Soul Ripper"
-    ]
-  },
-  {
-    "query": [
-      "ITEM::Trarthan Scarab",
-      "ITEM::Trarthan Scarab of Renown"
-    ],
-    "items": [
-      "UNIQUE::Hand of Heresy // Martyr Gloves",
-      "UNIQUE::Binds of Bloody Vengeance // Vanguard Belt",
-      "UNIQUE::Azadi Crest // Lacquered Buckler",
-      "UNIQUE::The Ghastly Theatre // Teak Round Shield",
-      "UNIQUE::Howlcrack // Ezomyte Burgonet",
-      "UNIQUE::Scornflux // Satin Slippers"
     ]
   },
 

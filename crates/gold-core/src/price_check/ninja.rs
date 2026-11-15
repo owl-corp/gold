@@ -8,7 +8,6 @@ const NAMESPACE_MAP: &[(&str, &str, &str)] = &[
     ("Currency", "ITEM", "currency"),
     ("Fragment", "ITEM", "fragments"),
     ("DeliriumOrb", "ITEM", "delirium-orbs"),
-    ("Scarab", "ITEM", "scarabs"),
     ("Artifact", "ITEM", "artifacts"),
     ("BaseType", "ITEM", "base-types"),
     ("Fossil", "ITEM", "fossils"),

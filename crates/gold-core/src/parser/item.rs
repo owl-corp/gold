@@ -118,8 +118,6 @@ pub struct ParsedItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_more_maps: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub map_more_scarabs: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub map_more_currency: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_more_div_cards: Option<f64>,

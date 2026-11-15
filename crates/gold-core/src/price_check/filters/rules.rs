@@ -135,9 +135,7 @@ pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
     }
 
     if !bulk {
-        let has_valuable_drops = truthy(item.map_more_scarabs).is_some()
-            || truthy(item.map_more_currency).is_some()
-            || truthy(item.map_more_div_cards).is_some();
+        let has_valuable_drops = truthy(item.map_more_currency).is_some() || truthy(item.map_more_div_cards).is_some();
 
         area_props(
             ctx,
@@ -150,7 +148,6 @@ pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
 
         for (value, ref_, disabled) in [
             (item.map_more_maps, "More Maps: #%", true),
-            (item.map_more_scarabs, "More Scarabs: #%", false),
             (item.map_more_currency, "More Currency: #%", false),
             (item.map_more_div_cards, "More Divination Cards: #%", false),
         ] {
