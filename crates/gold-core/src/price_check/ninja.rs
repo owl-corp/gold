@@ -158,6 +158,30 @@ impl NinjaDb {
         None
     }
 
+    /// Every entry of the section that `find` takes this one from, with its url.
+    pub fn section_prices(&self, ns: &str, name: &str, variant: Option<&str>) -> Option<Vec<Price>> {
+        let section = self.sections.iter().filter(|s| s.ns == ns).find(|s| {
+            s.lines
+                .iter()
+                .any(|l| l.name == name && l.variant.as_deref() == variant)
+        })?;
+        Some(
+            section
+                .lines
+                .iter()
+                .map(|info| Price {
+                    info: info.clone(),
+                    url: format!(
+                        "https://poe.ninja/poe1/economy/{}/{}/{}",
+                        league_to_url(&self.league),
+                        section.url,
+                        details_id(info)
+                    ),
+                })
+                .collect(),
+        )
+    }
+
     /// Mean chaos value of every entry in `ns` whose name ends with `suffix` (None if there is none).
     pub fn average_chaos_by_suffix(&self, ns: &str, suffix: &str) -> Option<f64> {
         let values: Vec<f64> = self

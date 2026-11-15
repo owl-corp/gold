@@ -184,6 +184,7 @@ Scope {
                             visible: root.view?.price?.amount != null
                             text: (root.view?.price?.amount ?? "") + " " + (root.view?.price?.unit ?? "")
                             font.bold: true
+                            font.pixelSize: Theme.fontSize + 2
                             color: Theme.yellow
                             MouseArea {
                                 anchors.fill: parent
@@ -205,6 +206,86 @@ Scope {
                             visible: root.view?.price?.status != null
                             text: root.view?.price?.status ?? ""
                             color: Theme.textDim
+                        }
+                    }
+
+                    // related items, or every price of a small poe.ninja category:
+                    // one block per group, a marker / name / price grid so the prices line up
+                    Repeater {
+                        model: root.view?.price?.groups ?? []
+
+                        ColumnLayout {
+                            id: group
+
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            Layout.topMargin: 4
+                            spacing: 4
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: Qt.alpha(Theme.text, 0.1)
+                            }
+                            StyledText {
+                                visible: !!group.modelData.heading
+                                text: (group.modelData.heading ?? "").toUpperCase()
+                                font.pixelSize: Theme.fontSize - 2
+                                font.letterSpacing: 1
+                                color: Theme.textDim
+                            }
+                            GridLayout {
+                                // the three Repeaters fill the grid column by column
+                                flow: GridLayout.TopToBottom
+                                rows: group.modelData.rows.length
+                                columnSpacing: 8
+                                rowSpacing: 3
+
+                                Repeater {
+                                    model: group.modelData.rows
+                                    Rectangle {
+                                        required property var modelData
+                                        Layout.fillHeight: true
+                                        implicitWidth: 3
+                                        radius: 2
+                                        color: modelData.current ? Theme.accent : "transparent"
+                                    }
+                                }
+                                Repeater {
+                                    model: group.modelData.rows
+                                    StyledText {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        text: modelData.name
+                                        font.bold: modelData.current
+                                        color: modelData.current ? Theme.text : Theme.textDim
+                                    }
+                                }
+                                Repeater {
+                                    model: group.modelData.rows
+                                    StyledText {
+                                        id: priceText
+
+                                        required property var modelData
+                                        Layout.alignment: Qt.AlignRight
+                                        Layout.leftMargin: 14
+                                        text: modelData.amount != null ? modelData.amount + " " + modelData.unit : "—"
+                                        font.bold: modelData.current
+                                        font.underline: priceHit.containsMouse && modelData.url != null
+                                        color: modelData.amount != null ? Theme.yellow : Theme.textDim
+                                        MouseArea {
+                                            id: priceHit
+
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            enabled: priceText.modelData.url != null
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: opener.open(priceText.modelData.url)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 

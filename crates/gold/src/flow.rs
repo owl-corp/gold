@@ -107,6 +107,12 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
         }
     };
 
+    // Currency-exchange items are priced by poe.ninja only: no presets means no search at all.
+    let (presets, active) = if item.info.exchangeable == Some(true) {
+        (vec![], 0)
+    } else {
+        (presets, active)
+    };
     let auto = presets.get(active).is_some_and(|p| search_on_open(&item, p));
     {
         let mut guard = app.session.lock().unwrap();

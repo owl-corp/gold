@@ -4,6 +4,7 @@ use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::price_check::details::{get_details_id, is_valuable_basetype};
 use gold_core::price_check::filters::util::round_roll;
 use gold_core::price_check::ninja::{auto_currency, delta_from_graph, display_rounding, Currency, NinjaDb};
+use gold_core::price_check::related;
 use serde_json::{json, Value};
 
 #[derive(Clone, Debug)]
@@ -174,6 +175,15 @@ fn preset_name(id: &str) -> &'static str {
     }
 }
 
+/// Most valuable first; entries without a price go last. Stable, so ties keep their order.
+fn sort_by_price(rows: &mut [Value]) {
+    let chaos = |r: &Value| r["chaos"].as_f64().unwrap_or(f64::NEG_INFINITY);
+    rows.sort_by(|a, b| chaos(b).total_cmp(&chaos(a)));
+}
+
+/// Sections of poe.ninja with at most this many entries are shown whole.
+const SMALL_CATEGORY: usize = 10;
+
 fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
     if is_valuable_basetype(item) && item.rarity != Some(ItemRarity::Unique) {
         // Equipment is priced by its mods on the trade site, not by poe.ninja.
@@ -187,16 +197,15 @@ fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
     };
 
     let rate = db.divine_rate();
-    let value = if item.info.ref_name == "Divine Orb" {
-        auto_currency(found.info.chaos, None)
-    } else {
-        auto_currency(found.info.chaos, rate)
+    let fmt = |chaos: f64, is_divine: bool| {
+        let v = auto_currency(chaos, if is_divine { None } else { rate });
+        match v.currency {
+            Currency::Chaos if is_divine => (display_rounding(chaos, false), "c"),
+            Currency::Chaos => (display_rounding(v.min, false), "c"),
+            Currency::Div => (display_rounding(v.min, false), "div"),
+        }
     };
-    let (amount, unit) = match value.currency {
-        Currency::Chaos if item.info.ref_name == "Divine Orb" => (display_rounding(found.info.chaos, false), "c"),
-        Currency::Chaos => (display_rounding(value.min, false), "c"),
-        Currency::Div => (display_rounding(value.min, false), "div"),
-    };
+    let (amount, unit) = fmt(found.info.chaos, item.info.ref_name == "Divine Orb");
     let mut price = json!({ "amount": amount, "unit": unit, "url": found.url });
     if id.ns == "ITEM" && id.name.ends_with(" Thread") {
         if let Some(avg) = db.average_chaos_by_suffix("ITEM", " Thread") {
@@ -207,6 +216,60 @@ fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
             };
             price["average"] = json!(format!("all threads avg {n} {u}"));
         }
+    }
+    // related items, or else all of a small category, not only this item
+    let row = |name: String, p: Option<(f64, String)>, current: bool| match p {
+        Some((chaos, url)) => {
+            let (amount, unit) = fmt(chaos, name == "Divine Orb");
+            json!({ "name": name, "chaos": chaos, "amount": amount, "unit": unit, "url": url, "current": current })
+        }
+        None => json!({ "name": name, "current": current }),
+    };
+    let curated = related::find_group(&id.ns, &id.name, id.variant.as_deref()).map(|g| {
+        let rows = |ids: &[String], heading: &str| {
+            let keys: Vec<_> = ids.iter().filter_map(|i| related::parse_key(i)).collect();
+            let mut rows: Vec<Value> = keys
+                .iter()
+                .map(|k| {
+                    // the variant tells apart entries that share a name
+                    let dup = keys.iter().filter(|o| o.name == k.name).count() > 1;
+                    let name = match k.variant {
+                        Some(v) if dup => format!("{} ({v})", k.name),
+                        _ => k.name.to_string(),
+                    };
+                    let p = db.find(k.ns, k.name, k.variant).map(|p| (p.info.chaos, p.url));
+                    let current = k.ns == id.ns && k.name == id.name && k.variant == id.variant.as_deref();
+                    row(name, p, current)
+                })
+                .collect();
+            sort_by_price(&mut rows);
+            (!rows.is_empty()).then(|| json!({ "heading": heading, "rows": rows }))
+        };
+        [rows(&g.query, "Related"), rows(&g.items, "Drops / used for")]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    });
+    let groups = curated.filter(|g| !g.is_empty()).or_else(|| {
+        let all = db.section_prices(&id.ns, &id.name, id.variant.as_deref())?;
+        (all.len() > 1 && all.len() <= SMALL_CATEGORY).then(|| {
+            let mut rows: Vec<Value> = all
+                .iter()
+                .map(|p| {
+                    let name = match p.info.variant.as_deref() {
+                        Some(v) if !v.is_empty() => format!("{}, {v}", p.info.name),
+                        _ => p.info.name.clone(),
+                    };
+                    let current = p.info.name == found.info.name && p.info.variant == found.info.variant;
+                    row(name, Some((p.info.chaos, p.url.clone())), current)
+                })
+                .collect();
+            sort_by_price(&mut rows);
+            vec![json!({ "rows": rows })]
+        })
+    });
+    if let Some(groups) = groups {
+        price["groups"] = json!(groups);
     }
     if let Some(trend) = delta_from_graph(&found.info.graph) {
         price["trend"] = json!(trend.forecast);
@@ -252,6 +315,18 @@ mod tests {
             show_hidden: false,
             fetching_more: false,
         })
+    }
+
+    #[test]
+    fn small_ninja_category_lists_every_entry() {
+        let v = view_of("Item Class: Stackable Currency\nRarity: Currency\nDivine Orb\n--------\nStack Size: 3/10\n");
+        let groups = v["price"]["groups"].as_array().unwrap();
+        let all = groups[0]["rows"].as_array().unwrap();
+        assert_eq!(all.len(), 2);
+        // most valuable first
+        assert_eq!(all[0]["name"], "Divine Orb");
+        assert_eq!(all[0]["current"], true);
+        assert_eq!(all[1]["name"], "Chaos Orb");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 pub mod details;
 pub mod filters;
 pub mod ninja;
+pub mod related;
 pub mod trade;
 
 /// `floorToBracket`: the largest bracket not above `value` (the first if none).
