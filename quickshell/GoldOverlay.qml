@@ -197,6 +197,11 @@ Scope {
                             color: root.view?.price?.trend === "up" ? Theme.green : root.view?.price?.trend === "down" ? Theme.red : Theme.textDim
                         }
                         StyledText {
+                            visible: root.view?.price?.average != null
+                            text: "(" + (root.view?.price?.average ?? "") + ")"
+                            color: Theme.textDim
+                        }
+                        StyledText {
                             visible: root.view?.price?.status != null
                             text: root.view?.price?.status ?? ""
                             color: Theme.textDim

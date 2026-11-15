@@ -197,6 +197,16 @@ fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
         Currency::Div => (display_rounding(value.min, false), "div"),
     };
     let mut price = json!({ "amount": amount, "unit": unit, "url": found.url });
+    if id.ns == "ITEM" && id.name.ends_with(" Thread") {
+        if let Some(avg) = db.average_chaos_by_suffix("ITEM", " Thread") {
+            let v = auto_currency(avg, rate);
+            let (n, u) = match v.currency {
+                Currency::Chaos => (display_rounding(v.min, false), "c"),
+                Currency::Div => (display_rounding(v.min, false), "div"),
+            };
+            price["average"] = json!(format!("all threads avg {n} {u}"));
+        }
+    }
     if let Some(trend) = delta_from_graph(&found.info.graph) {
         price["trend"] = json!(trend.forecast);
         price["trendText"] = json!(trend.text);

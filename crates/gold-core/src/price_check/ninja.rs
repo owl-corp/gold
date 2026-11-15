@@ -31,6 +31,7 @@ const NAMESPACE_MAP: &[(&str, &str, &str)] = &[
     ("Ducat", "ITEM", "ducats"),
     ("EnshroudingCrystal", "ITEM", "enshrouding-crystals"),
     ("Corpse", "ITEM", "corpses"),
+    ("Thread", "ITEM", "threads"),
     ("DivinationCard", "DIVINATION_CARD", "divination-cards"),
     ("Beast", "CAPTURED_BEAST", "beasts"),
     ("UniqueJewel", "UNIQUE", "unique-jewels"),
@@ -155,6 +156,19 @@ impl NinjaDb {
             }
         }
         None
+    }
+
+    /// Mean chaos value of every entry in `ns` whose name ends with `suffix` (None if there is none).
+    pub fn average_chaos_by_suffix(&self, ns: &str, suffix: &str) -> Option<f64> {
+        let values: Vec<f64> = self
+            .sections
+            .iter()
+            .filter(|s| s.ns == ns)
+            .flat_map(|s| &s.lines)
+            .filter(|l| l.name.ends_with(suffix))
+            .map(|l| l.chaos)
+            .collect();
+        (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
     }
 
     /// Chaos orbs per Divine Orb, when poe.ninja has a believable value.
@@ -315,6 +329,16 @@ mod tests {
         let m = db.find("UNIQUE", "Mageblood", Some("4 Flasks, Heavy Belt")).unwrap();
         assert!(m.url.ends_with("/unique-accessories/mageblood-4-flasks-heavy-belt"));
         assert!(db.find("UNIQUE", "Mageblood", None).is_none());
+    }
+
+    #[test]
+    fn thread_overview_is_mapped_and_averaged() {
+        let json = r#"{"currencyOverviews":[],"itemOverviews":[{"type":"Thread","lines":[
+            {"name":"Abyss Thread","chaos":1,"graph":[]},
+            {"name":"Ultimatum Thread","chaos":3,"graph":[]}]}]}"#;
+        let db = NinjaDb::from_json("Covens", json.as_bytes()).unwrap();
+        assert!(db.find("ITEM", "Ultimatum Thread", None).is_some());
+        assert_eq!(db.average_chaos_by_suffix("ITEM", " Thread"), Some(2.0));
     }
 
     #[test]
