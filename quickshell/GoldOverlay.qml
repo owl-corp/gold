@@ -352,6 +352,11 @@ Scope {
                                 elide: Text.ElideRight
                                 text: (row.modelData.not ? "NOT " : "") + row.modelData.text
                                 color: row.modelData.on ? Theme.text : Theme.textDim
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: { panel.forceActiveFocus(); root.send({ type: "toggle", index: row.modelData.index }); }
+                                }
                             }
                             Repeater {
                                 model: row.modelData.editable ? ["min", "max"] : []
