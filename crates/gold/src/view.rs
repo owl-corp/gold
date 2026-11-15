@@ -252,9 +252,10 @@ fn ninja_price(item: &ParsedItem, db: &NinjaDb) -> Value {
             .flatten()
             .collect::<Vec<_>>()
     });
+    let is_omen = id.ns == "ITEM" && id.name.starts_with("Omen of ");
     let groups = curated.filter(|g| !g.is_empty()).or_else(|| {
         let all = db.section_prices(&id.ns, &id.name, id.variant.as_deref())?;
-        (all.len() > 1 && all.len() <= SMALL_CATEGORY).then(|| {
+        (all.len() > 1 && (all.len() <= SMALL_CATEGORY || is_omen)).then(|| {
             let mut rows: Vec<Value> = all
                 .iter()
                 .map(|p| {
