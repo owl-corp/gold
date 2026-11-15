@@ -341,6 +341,12 @@ Scope {
                                 }
                             }
                             StyledText {
+                                visible: row.modelData.tag === "fractured"
+                                text: "Fractured"
+                                color: "#d4c08a"
+                                font.bold: true
+                            }
+                            StyledText {
                                 Layout.fillWidth: true
                                 Layout.maximumWidth: 360
                                 elide: Text.ElideRight

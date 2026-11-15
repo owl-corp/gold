@@ -170,7 +170,10 @@ pub fn init_ui_mod_filters(data: &GameData, item: &ParsedItem, search_stat_range
             .stats_by_type
             .iter()
             .map(|calc| {
-                if calc.type_ == ModifierType::Fractured && calc.stat.trade.ids.contains_key("explicit") {
+                if calc.type_ == ModifierType::Fractured
+                    && !calc.stat.trade.ids.contains_key("fractured")
+                    && calc.stat.trade.ids.contains_key("explicit")
+                {
                     StatCalculated {
                         type_: ModifierType::Explicit,
                         ..calc.clone()
@@ -192,6 +195,7 @@ pub fn init_ui_mod_filters(data: &GameData, item: &ParsedItem, search_stat_range
     }
 
     if !item.is_corrupted && item.is_mirrored != Some(true) {
+        // pseudo stats may have consumed fractured mods: always search them as fractured
         ctx.stats_by_type.retain(|m| m.type_ != ModifierType::Fractured);
         ctx.stats_by_type.extend(
             item.stats_by_type
@@ -572,16 +576,6 @@ fn final_filter_tweaks(ctx: &mut Ctx) -> Result<()> {
         if filter.tag == FilterTag::ENCHANT {
             if QUALITY_CHANGING_ENCHANT.contains(&filter.stat_ref.as_str()) {
                 filter.hidden = Some("hide_enchant_meta_stat".into());
-            }
-        } else if filter.tag == FilterTag::FRACTURED {
-            let has_explicit = item
-                .stats_by_type
-                .iter()
-                .find(|m| m.stat.ref_ == filter.stat_ref)
-                .is_some_and(|m| m.stat.trade.ids.contains_key("explicit"));
-            if has_explicit {
-                // hide only if fractured mod has corresponding explicit variant
-                filter.hidden = Some("filters.hide_for_crafting".into());
             }
         } else if filter
             .sources
