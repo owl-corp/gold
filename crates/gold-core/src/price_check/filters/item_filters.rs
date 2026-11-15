@@ -328,12 +328,13 @@ pub fn create_filters(data: &GameData, item: &ParsedItem, opts: &CreateOptions) 
             value: "magic",
             disabled: true,
         });
-    } else if info.craftable.is_some()
-        && matches!(
-            item.rarity,
-            Some(ItemRarity::Normal | ItemRarity::Magic | ItemRarity::Rare)
-        )
-    {
+    } else if info.craftable.is_some() && item.rarity == Some(ItemRarity::Magic) {
+        // a magic item with the wanted mods is worth more than a full rare with them: search magic only
+        filters.rarity = Some(Rarity {
+            value: "magic",
+            disabled: false,
+        });
+    } else if info.craftable.is_some() && matches!(item.rarity, Some(ItemRarity::Normal | ItemRarity::Rare)) {
         filters.rarity = Some(Rarity {
             value: "nonunique",
             disabled: false,

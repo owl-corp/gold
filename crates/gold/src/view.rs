@@ -91,7 +91,8 @@ pub fn render(s: &Session) -> Value {
         .unwrap_or(0);
     let trade_filters = s.preset().map(|p| {
         let t = &p.filters.trade;
-        json!({ "offline": t.offline, "merchantOnly": t.merchant_only, "listed": t.listed, "currency": t.currency })
+        let magic_only = p.filters.rarity.as_ref().filter(|r| r.value == "magic").map(|r| !r.disabled);
+        json!({ "offline": t.offline, "merchantOnly": t.merchant_only, "listed": t.listed, "currency": t.currency, "magicOnly": magic_only })
     });
 
     // the quality minimum the search uses (gems search below their own quality)

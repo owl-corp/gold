@@ -9,7 +9,7 @@ use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::parser::meta::{known, ItemCategory};
 use gold_core::parser::parse_clipboard;
 use gold_core::price_check::filters::presets::{create_presets, FilterPreset, Unsupported};
-use gold_core::price_check::filters::TradeFilters;
+use gold_core::price_check::filters::ItemFilters;
 use gold_core::price_check::trade::category_to_trade_id;
 use serde_json::Value;
 use std::sync::Arc;
@@ -200,8 +200,13 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
 const LISTED: [&str; 6] = ["1day", "3days", "1week", "2weeks", "1month", "2months"];
 
 /// Flips or cycles one trade filter. Returns whether it changed.
-fn apply_trade_filter(t: &mut TradeFilters, key: &str) -> bool {
+fn apply_trade_filter(f: &mut ItemFilters, key: &str) -> bool {
+    let t = &mut f.trade;
     match key {
+        "magicOnly" => match &mut f.rarity {
+            Some(r) if r.value == "magic" => r.disabled = !r.disabled,
+            _ => return false,
+        },
         "offline" => t.offline = !t.offline,
         "merchantOnly" => t.merchant_only = !t.merchant_only,
         "listed" => {
@@ -332,7 +337,7 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
                 let had_search = !matches!(s.search, SearchState::Idle);
                 let changed = s
                     .preset_mut()
-                    .is_some_and(|p| apply_trade_filter(&mut p.filters.trade, action["key"].as_str().unwrap_or("")));
+                    .is_some_and(|p| apply_trade_filter(&mut p.filters, action["key"].as_str().unwrap_or("")));
                 if changed {
                     s.search = SearchState::Idle;
                     s.search_gen += 1;

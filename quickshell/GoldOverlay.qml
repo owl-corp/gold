@@ -349,6 +349,7 @@ Scope {
                                 if (!t) return [];
                                 const listed = { "1day": "1 day", "3days": "3 days", "1week": "1 week", "2weeks": "2 weeks", "1month": "1 month", "2months": "2 months" };
                                 return [
+                                    ...(t.magicOnly != null ? [{ key: "magicOnly", text: "magic only", on: t.magicOnly }] : []),
                                     { key: "offline", text: t.offline ? "online + offline" : "online only", on: t.offline },
                                     { key: "merchantOnly", text: "instant buyout", on: t.merchantOnly },
                                     { key: "listed", text: "listed: " + (listed[t.listed] ?? "any time"), on: t.listed != null }
