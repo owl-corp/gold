@@ -1,7 +1,7 @@
 //! Stat filters: one per modifier of the item.
 //!
-//! Not ported: special rules for mercenary warrants, Atzoatl, mirrored tablets and timeless
-//! jewels (searching for these reports "not supported").
+//! Not ported: special rules for Atzoatl, mirrored tablets and timeless jewels (searching for
+//! these reports "not supported").
 use super::pseudo::{
     filter_base_percentile, filter_equipment_props, filter_memory_strands, filter_pseudo, BASE_PCTL_AFFECTED_IDS,
 };
@@ -153,6 +153,35 @@ pub fn create_exact_stat_filters(
     }
 
     Ok(ctx.filters)
+}
+
+/// Mercenary warrants: one filter per skill and per support gem, all off. A skill's filter is tagged `mercenary_skill`, its
+/// supports follow it tagged `mercenary_support`. The trade site cannot
+/// tie a support to its skill, so the filters only say that the warrant has the skill / support.
+pub fn create_mercenary_filters(item: &ParsedItem) -> Vec<StatFilter> {
+    item.mercenary_skills
+        .iter()
+        .flatten()
+        .flat_map(|group| group.iter().enumerate())
+        .map(|(i, t)| StatFilter {
+            trade_id: t.stat.trade.ids.get("pseudo").cloned().unwrap_or_default(),
+            stat_ref: t.stat.ref_.clone(),
+            text: t
+                .translation
+                .advanced
+                .clone()
+                .unwrap_or_else(|| t.translation.string.clone()),
+            // the first line of a group is the skill, the rest are its supports
+            tag: FilterTag(if i == 0 { "mercenary_skill" } else { "mercenary_support" }),
+            oils: None,
+            sources: vec![],
+            not: None,
+            roll: None,
+            option: None,
+            hidden: None,
+            disabled: true,
+        })
+        .collect()
 }
 
 /// `initUiModFilters`: the filters shown in the overlay, with most stats off by default.

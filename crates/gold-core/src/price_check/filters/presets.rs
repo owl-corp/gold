@@ -1,6 +1,6 @@
 //! Which filter presets an item gets.
 use super::item_filters::{create_filters, CreateOptions};
-use super::stat_filters::{create_exact_stat_filters, init_ui_mod_filters, Mode};
+use super::stat_filters::{create_exact_stat_filters, create_mercenary_filters, init_ui_mod_filters, Mode};
 use super::*;
 use crate::data::GameData;
 use crate::parser::item::{ItemRarity, ParsedItem};
@@ -58,13 +58,11 @@ fn item_opts(opts: &PresetOptions, exact: bool) -> CreateOptions {
 pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) -> Result<Presets> {
     use ItemCategory::*;
     let name = item.info.ref_name.as_str();
-    if matches!(
-        name,
-        "Expedition Logbook" | "Mercenary Warrant" | "Chronicle of Atzoatl" | "Mirrored Tablet"
-    ) || item
-        .unique_base
-        .as_ref()
-        .is_some_and(|b| b.ref_name == "Timeless Jewel")
+    if matches!(name, "Expedition Logbook" | "Chronicle of Atzoatl" | "Mirrored Tablet")
+        || item
+            .unique_base
+            .as_ref()
+            .is_some_and(|b| b.ref_name == "Timeless Jewel")
     {
         return Err(Unsupported(name.to_string()).into());
     }
@@ -74,6 +72,18 @@ pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) 
     let unique = item.rarity == Some(ItemRarity::Unique);
 
     let exact_filters = |exact: bool| create_filters(data, item, &item_opts(opts, exact));
+
+    if name == "Mercenary Warrant" {
+        let exact = FilterPreset {
+            id: "filters.preset_exact",
+            filters: exact_filters(false)?,
+            stats: create_mercenary_filters(item),
+        };
+        return Ok(Presets {
+            active: exact.id,
+            presets: vec![exact],
+        });
+    }
 
     if (item.info.craftable.is_none() && !unique)
         || item.is_unidentified

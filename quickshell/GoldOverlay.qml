@@ -328,6 +328,11 @@ Scope {
 
                             spacing: 8
 
+                            // supports of a mercenary warrant hang under their skill
+                            Item {
+                                visible: row.modelData.tag === "mercenary_support"
+                                implicitWidth: 18
+                            }
                             Rectangle {
                                 implicitWidth: 16
                                 implicitHeight: 16
@@ -351,6 +356,7 @@ Scope {
                                 Layout.maximumWidth: 360
                                 elide: Text.ElideRight
                                 text: (row.modelData.not ? "NOT " : "") + row.modelData.text
+                                font.bold: row.modelData.tag === "mercenary_skill"
                                 color: row.modelData.on ? Theme.text : Theme.textDim
                                 MouseArea {
                                     anchors.fill: parent

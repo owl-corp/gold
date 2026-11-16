@@ -1,0 +1,41 @@
+Item Class: Map Fragments
+Rarity: Normal
+Mercenary Warrant
+--------
+Alara, the Cyaxan-Born
+--------
+Build: Infamous Manyshot
+Mercenary Level: 81
+--------
+Ice Shot
+Greater Multiple Projectiles (Tier: 3)
+Pierce (Tier: 2)
+Greater Area of Effect (Tier: 3)
+Elemental Damage with Attacks (Tier: 2)
+Cold Penetration (Tier: 2)
+--------
+Vaal Grace
+--------
+Vaal Ice Shot
+Greater Fork (Tier: 3)
+Increased Area of Effect (Tier: 2)
+Cooldown Recovery (Tier: 2)
+Pierce (Tier: 2)
+Hypothermia (Tier: 2)
+--------
+Mirror Arrow
+Minion Damage (Tier: 2)
+Greater Faster Attacks (Tier: 3)
+Greater Minion Life (Tier: 3)
+Greater Cooldown Recovery (Tier: 3)
+Added Cold (Tier: 2)
+--------
+Blink Arrow
+Greater Faster Projectiles (Tier: 3)
+Minion Life (Tier: 2)
+--------
+Grace
+--------
+Right click this item to view Mercenary details.
+Open a portal to the Proving Grounds by using this item in a personal Map Device. This previously fought Mercenary will reappear in the area for a rematch. While viewing your Atlas, Right-click this item to pinpoint its location.
+

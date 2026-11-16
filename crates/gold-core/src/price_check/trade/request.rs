@@ -1,6 +1,6 @@
 //! The trade site search request.
 //!
-//! Not ported yet: mercenary warrant groups and "not"/"one of" filter groups.
+//! Not ported yet: "not"/"one of" filter groups.
 use super::category_to_trade_id;
 use crate::data::{GameData, StatOrGroup};
 use crate::price_check::filters::{ItemFilters, StatFilter, INTERNAL_TRADE_IDS};
