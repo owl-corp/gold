@@ -43,6 +43,6 @@ activate_stock_filter = false # filter stacked currency by stack size
 account_name = "Name"         # marks your own listings in the results
 ```
 
-Not supported yet: expedition logbooks, Atzoatl, mirrored tablets and timeless jewels.
+Not supported yet: expedition logbooks and timeless jewels.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how it works and how to develop it.

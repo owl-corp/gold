@@ -1,6 +1,6 @@
 //! Stat filters: one per modifier of the item.
 //!
-//! Not ported: special rules for Atzoatl, mirrored tablets and timeless jewels (searching for
+//! Not ported: special rules for timeless jewels (searching for
 //! these reports "not supported").
 use super::pseudo::{
     filter_base_percentile, filter_equipment_props, filter_memory_strands, filter_pseudo, BASE_PCTL_AFFECTED_IDS,
@@ -140,6 +140,12 @@ pub fn create_exact_stat_filters(
 
     if cat == Some(ClusterJewel) {
         apply_cluster_jewel_rules(&mut ctx.filters, true);
+    }
+    if item.info.ref_name == "Chronicle of Atzoatl" {
+        // every room is an AND: search the apex and the tier 3 rooms by default
+        for f in &mut ctx.filters {
+            f.disabled = !(f.text.contains("Apex of Atzoatl") || f.text.contains("(Tier 3)"));
+        }
     }
     match cat {
         Some(HeistContract | HeistBlueprint) => apply_heist_rules(&mut ctx)?,
@@ -335,12 +341,7 @@ pub fn calculated_stat_to_filter(
         });
     }
 
-    let mode = if item.info.ref_name == "Mirrored Tablet" {
-        SumMode::Max
-    } else {
-        SumMode::Sum
-    };
-    let roll = stat_sources_total(&calc.sources, mode);
+    let roll = stat_sources_total(&calc.sources, SumMode::Sum);
     let translation = translate_stat_with_roll(calc, roll)?;
 
     let mut filter = option_filter.unwrap_or_else(|| StatFilter {

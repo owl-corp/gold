@@ -154,7 +154,6 @@ pub fn create_filters(data: &GameData, item: &ParsedItem, opts: &CreateOptions) 
                     false,
                 ));
             }
-            "Mirrored Tablet" => filters.area_level = Some(FilterNumeric::new(area_level, false)),
             "Forbidden Tome" => {
                 let mut f = FilterNumeric::new(area_level, false);
                 if area_level < 83.0 {

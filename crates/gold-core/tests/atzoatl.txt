@@ -1,0 +1,25 @@
+Item Class: Misc Map Items
+Rarity: Currency
+Chronicle of Atzoatl
+--------
+Area Level: 84
+--------
+Open Rooms:
+Shrine of Empowerment (Tier 1)
+Tempest Generator (Tier 1)
+Engineering Department (Tier 2)
+Guardhouse (Tier 1)
+Wealth of the Vaal (Tier 3)
+Strongbox Chamber (Tier 1)
+Lightning Workshop (Tier 1)
+Corruption Chamber (Tier 1)
+Cradle of Creation (Tier 3)
+Cultivar Chamber (Tier 2)
+Breach Containment Chamber (Tier 2)
+Apex of Atzoatl
+--------
+"Evidence suggests that Atzoatl's influence grew great enough that Atziri herself moved her seat of power to within its walls." - Icius Perandus, Antiquities Collection, Royal Decree cast in Bronze
+--------
+Right click this item to view the Temple of Atzoatl.
+Can be used in a personal Map Device to open portals to the Temple of Atzoatl in the present day.
+

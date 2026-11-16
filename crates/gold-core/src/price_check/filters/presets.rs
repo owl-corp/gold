@@ -56,7 +56,7 @@ fn item_opts(opts: &PresetOptions, exact: bool) -> CreateOptions {
 pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) -> Result<Presets> {
     use ItemCategory::*;
     let name = item.info.ref_name.as_str();
-    if matches!(name, "Expedition Logbook" | "Chronicle of Atzoatl" | "Mirrored Tablet")
+    if name == "Expedition Logbook"
         || item
             .unique_base
             .as_ref()

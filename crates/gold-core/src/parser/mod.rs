@@ -99,7 +99,6 @@ const PARSERS: &[Parser] = &[
     Section(parse_chart),
     Section(parse_area_level),
     Section(parse_atzoatl_rooms),
-    Section(parse_mirrored_tablet),
     Section(parse_filled_coffin),
     Section(parse_mirrored),
     Section(parse_split),
@@ -1338,7 +1337,7 @@ fn parse_area_level_nested(d: &GameData, section: &[String], item: &mut ParsedIt
 
 fn parse_area_level(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
     let r = item.info.ref_name.as_str();
-    if r != "Chronicle of Atzoatl" && r != "Expedition Logbook" && r != "Mirrored Tablet" && r != "Forbidden Tome" {
+    if r != "Chronicle of Atzoatl" && r != "Expedition Logbook" && r != "Forbidden Tome" {
         return Ok(ParserSkipped);
     }
 
@@ -1388,35 +1387,6 @@ fn parse_atzoatl_rooms(d: &GameData, section: &[String], item: &mut ParsedItem) 
                         max: state,
                     }),
                 }],
-            });
-        } else {
-            item.unknown_modifiers.push(UnknownModifier {
-                text: line.clone(),
-                type_: ModifierType::Pseudo,
-            });
-        }
-    }
-
-    Ok(Parsed)
-}
-
-fn parse_mirrored_tablet(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
-    if item.info.ref_name != "Mirrored Tablet" {
-        return Ok(ParserSkipped);
-    }
-    if section.len() < 8 {
-        return Ok(Skipped);
-    }
-
-    for line in section {
-        let stat = StatString {
-            string: line.clone(),
-            unscalable: true,
-        };
-        if let Some(found) = try_parse_translation(d, &stat, ModifierType::Pseudo, None)? {
-            item.new_mods.push(ParsedModifier {
-                info: ModifierInfo::new(ModifierType::Pseudo),
-                stats: vec![found],
             });
         } else {
             item.unknown_modifiers.push(UnknownModifier {
