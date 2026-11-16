@@ -202,27 +202,13 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
     });
 }
 
-/// The "listed" choices of the trade site, shortest first.
-const LISTED: [&str; 6] = ["1day", "3days", "1week", "2weeks", "1month", "2months"];
-
 /// Flips or cycles one trade filter. Returns whether it changed.
 fn apply_trade_filter(f: &mut ItemFilters, key: &str) -> bool {
-    let t = &mut f.trade;
     match key {
         "magicOnly" => match &mut f.rarity {
             Some(r) if r.value == "magic" => r.disabled = !r.disabled,
             _ => return false,
         },
-        "offline" => t.offline = !t.offline,
-        "merchantOnly" => t.merchant_only = !t.merchant_only,
-        "listed" => {
-            // any -> 1 day -> ... -> 2 months -> any
-            let next = match t.listed.as_deref().and_then(|l| LISTED.iter().position(|x| *x == l)) {
-                None => Some(LISTED[0]),
-                Some(i) => LISTED.get(i + 1).copied(),
-            };
-            t.listed = next.map(String::from);
-        }
         _ => return false,
     }
     true
@@ -380,7 +366,6 @@ mod tests {
         let item = parse_clipboard(&data, text).unwrap();
         let opts = PresetOptions {
             league: "Covens".into(),
-            merchant_only: false,
             currency: None,
             collapse_listings: "api",
             activate_stock_filter: false,

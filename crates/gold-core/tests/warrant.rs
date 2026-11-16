@@ -14,7 +14,6 @@ fn warrant_search() {
     let item = parse_clipboard(&data, &text).unwrap();
     let opts = PresetOptions {
         league: "Covens".into(),
-        merchant_only: false,
         currency: None,
         collapse_listings: "api",
         activate_stock_filter: false,

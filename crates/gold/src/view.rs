@@ -92,8 +92,13 @@ pub fn render(s: &Session) -> Value {
         .unwrap_or(0);
     let trade_filters = s.preset().map(|p| {
         let t = &p.filters.trade;
-        let magic_only = p.filters.rarity.as_ref().filter(|r| r.value == "magic").map(|r| !r.disabled);
-        json!({ "offline": t.offline, "merchantOnly": t.merchant_only, "listed": t.listed, "currency": t.currency, "magicOnly": magic_only })
+        let magic_only = p
+            .filters
+            .rarity
+            .as_ref()
+            .filter(|r| r.value == "magic")
+            .map(|r| !r.disabled);
+        json!({ "currency": t.currency, "magicOnly": magic_only })
     });
 
     // the quality minimum the search uses (gems search below their own quality)
@@ -346,7 +351,6 @@ mod tests {
         let item = parse_clipboard(&data, text).unwrap();
         let opts = PresetOptions {
             league: "Covens".into(),
-            merchant_only: false,
             currency: None,
             collapse_listings: "api",
             activate_stock_filter: false,

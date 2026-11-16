@@ -110,10 +110,6 @@ pub struct Veiled {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TradeFilters {
-    pub offline: bool,
-    pub online_in_league: bool,
-    pub merchant_only: bool,
-    pub listed: Option<String>,
     pub currency: Option<String>,
     pub league: String,
     pub collapse_listings: &'static str,

@@ -64,7 +64,6 @@ fn split_corpus(input: &str) -> Vec<String> {
 fn options() -> PresetOptions {
     PresetOptions {
         league: "Covens".into(),
-        merchant_only: false,
         currency: None,
         collapse_listings: "api",
         activate_stock_filter: false,

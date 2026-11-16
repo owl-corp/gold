@@ -12,7 +12,6 @@ use crate::price_check::{ceil_to_bracket, floor_to_bracket};
 #[derive(Clone, Debug)]
 pub struct CreateOptions {
     pub league: String,
-    pub merchant_only: bool,
     pub currency: Option<String>,
     /// "app" or "api"
     pub collapse_listings: &'static str,
@@ -89,13 +88,6 @@ pub fn create_filters(data: &GameData, item: &ParsedItem, opts: &CreateOptions) 
         area_level: None,
         sentinel_charge: None,
         trade: TradeFilters {
-            offline: false,
-            online_in_league: false,
-            merchant_only: opts.merchant_only
-                // these are Divination Cards, and some items at start of league
-                // that are on Currency Exchange but was not added to Bulk section of site yet
-                && !(info.exchangeable == Some(true) && info.trade_tag.is_none()),
-            listed: None,
             currency: opts.currency.clone(),
             league: opts.league.clone(),
             collapse_listings: opts.collapse_listings,

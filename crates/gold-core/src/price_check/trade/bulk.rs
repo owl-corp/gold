@@ -73,14 +73,7 @@ pub struct BulkSearch {
 
 /// `createTradeRequest` of the bulk module. `want` is the item's trade tag.
 pub fn create_bulk_request(filters: &ItemFilters, want: &str, have: &[&str]) -> Value {
-    let status = if filters.trade.offline {
-        "any"
-    } else if filters.trade.online_in_league {
-        "onlineleague"
-    } else {
-        "online"
-    };
-    let mut query = json!({ "have": have, "want": [want], "status": { "option": status } });
+    let mut query = json!({ "have": have, "want": [want], "status": { "option": "any" } });
     if let Some(min) = filters.stack_size.as_ref().filter(|f| !f.disabled) {
         query["minimum"] = json!(min.value);
     }

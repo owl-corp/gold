@@ -26,7 +26,6 @@ const SEARCH_STAT_RANGE: f64 = 10.0;
 #[derive(Clone, Debug)]
 pub struct PresetOptions {
     pub league: String,
-    pub merchant_only: bool,
     pub currency: Option<String>,
     pub collapse_listings: &'static str,
     pub activate_stock_filter: bool,
@@ -47,7 +46,6 @@ impl std::error::Error for Unsupported {}
 fn item_opts(opts: &PresetOptions, exact: bool) -> CreateOptions {
     CreateOptions {
         league: opts.league.clone(),
-        merchant_only: opts.merchant_only,
         currency: opts.currency.clone(),
         collapse_listings: opts.collapse_listings,
         activate_stock_filter: opts.activate_stock_filter,

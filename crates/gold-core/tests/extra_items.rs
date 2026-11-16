@@ -39,7 +39,6 @@ Something rewarding.
 fn request(data: &GameData, text: &str) -> Value {
     let options = PresetOptions {
         league: "Covens".into(),
-        merchant_only: false,
         currency: None,
         collapse_listings: "api",
         activate_stock_filter: false,

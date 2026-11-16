@@ -77,8 +77,6 @@ impl App {
     pub fn preset_options(&self, league: String) -> PresetOptions {
         PresetOptions {
             league,
-            // instant buyout only; the overlay toggle switches it off per search
-            merchant_only: true,
             currency: self.config.default_currency.clone(),
             collapse_listings: if self.config.collapse_listings.as_deref() == Some("app") {
                 "app"

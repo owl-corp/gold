@@ -156,7 +156,7 @@ fn append_and_filter(stat: &StatFilter, and_group: &mut Value, all_groups: &mut 
 pub fn create_trade_request(data: &GameData, filters: &ItemFilters, stats: &[StatFilter]) -> Result<Value> {
     let trade = &filters.trade;
     let mut query = json!({
-        "status": { "option": if trade.offline { "any" } else if trade.merchant_only { "securable" } else { "available" } },
+        "status": { "option": "securable" },
         "stats": [ { "type": "and", "filters": [] } ],
         "filters": {},
     });
@@ -170,15 +170,8 @@ pub fn create_trade_request(data: &GameData, filters: &ItemFilters, stats: &[Sta
             Some(json!(currency)),
         );
     }
-    if trade.collapse_listings == "api" && (trade.offline || !trade.merchant_only || trade.collapse_merchant) {
+    if trade.collapse_listings == "api" && trade.collapse_merchant {
         set_bool(&mut q_filters, "trade_filters.filters.collapse.option", true);
-    }
-    if let Some(listed) = &trade.listed {
-        set(
-            &mut q_filters,
-            "trade_filters.filters.indexed.option",
-            Some(json!(listed)),
-        );
     }
 
     let mut active = match &filters.search_relaxed {
