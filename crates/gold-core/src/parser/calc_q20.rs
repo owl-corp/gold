@@ -2,7 +2,7 @@
 //!.
 use super::item::ParsedItem;
 use super::modifiers::{stat_sources_total, StatRoll, StatSource, SumMode};
-use anyhow::{anyhow, Result};
+use super::{ParseError, Result};
 
 pub struct QualityStats {
     pub flat: &'static [&'static str],
@@ -60,20 +60,22 @@ fn has_quality_changing_enchant(item: &ParsedItem) -> bool {
         .any(|c| QUALITY_CHANGING_ENCHANT.contains(&c.stat.ref_.as_str()))
 }
 
-pub fn get_trade_max_quality(item: &ParsedItem) -> f64 {
+#[must_use]
+pub fn get_trade_max_quality(item: &ParsedItem) -> i64 {
     if has_quality_changing_enchant(item) {
-        return 0.0;
+        return 0;
     }
     // currently Trade Site applies 20% to everything else,
     // including Mirrored items
-    crate::js::max(20.0, item.quality.unwrap_or(0.0))
+    item.quality.unwrap_or(0).max(20)
 }
 
-pub fn get_prop_quality(item: &ParsedItem) -> f64 {
+#[must_use]
+pub fn get_prop_quality(item: &ParsedItem) -> i64 {
     if has_quality_changing_enchant(item) {
-        return 0.0;
+        return 0;
     }
-    item.quality.unwrap_or(0.0)
+    item.quality.unwrap_or(0)
 }
 
 pub struct PropRoll {
@@ -88,20 +90,20 @@ pub fn prop_at_20_quality(
     item: &ParsedItem,
 ) -> Result<PropRoll> {
     let (incr, flat, sources) = calc_prop_base(stats, item)?;
-    let base = calc_flat(total, incr.value, get_prop_quality(item)) - flat.value;
+    let base = calc_flat(total, incr.value, get_prop_quality(item) as f64) - flat.value;
     let [base_min, base_max] = bounds.unwrap_or([base, base]);
-    let quality = get_trade_max_quality(item);
-    let roll = if !base.is_nan() {
-        StatRoll {
-            value: calc_increased(base + flat.value, incr.value, quality),
-            min: calc_increased(base_min + flat.min, incr.min, quality),
-            max: calc_increased(base_max + flat.max, incr.max, quality),
-        }
-    } else {
+    let quality = get_trade_max_quality(item) as f64;
+    let roll = if base.is_nan() {
         StatRoll {
             value: 0.0,
             min: 0.0,
             max: 0.0,
+        }
+    } else {
+        StatRoll {
+            value: calc_increased(base + flat.value, incr.value, quality),
+            min: calc_increased(base_min + flat.min, incr.min, quality),
+            max: calc_increased(base_max + flat.max, incr.max, quality),
         }
     };
     Ok(PropRoll {
@@ -130,7 +132,9 @@ pub fn calc_prop_bounds(total: f64, stats: &QualityStats, item: &ParsedItem) -> 
         sources
             .into_iter()
             .map(|s| {
-                let c = s.contributes.ok_or_else(|| anyhow!("source without a roll"))?;
+                let c = s
+                    .contributes
+                    .ok_or_else(|| ParseError::parse("source without a roll"))?;
                 Ok(StatSource {
                     contributes: Some(StatRoll {
                         value: base * c.value / 100.0,
@@ -149,7 +153,7 @@ pub fn calc_prop_bounds(total: f64, stats: &QualityStats, item: &ParsedItem) -> 
 
 pub fn calc_prop_percentile(total: f64, bounds: [f64; 2], stats: &QualityStats, item: &ParsedItem) -> Result<f64> {
     let (incr, flat, _) = calc_prop_base(stats, item)?;
-    let roll = calc_flat(total, incr.value, get_prop_quality(item)) - flat.value;
+    let roll = calc_flat(total, incr.value, get_prop_quality(item) as f64) - flat.value;
     let [min, max] = bounds;
     let result = crate::js::round(((roll - min) / (max - min)) * 100.0);
     Ok(crate::js::min(crate::js::max(result, 0.0), 100.0))
@@ -168,7 +172,8 @@ fn calc_prop_base(stats: &QualityStats, item: &ParsedItem) -> Result<(StatRoll, 
         } else {
             continue;
         };
-        let roll = stat_sources_total(&calc.sources, SumMode::Sum).ok_or_else(|| anyhow!("stat without a roll"))?;
+        let roll =
+            stat_sources_total(&calc.sources, SumMode::Sum).ok_or_else(|| ParseError::parse("stat without a roll"))?;
         total.value += roll.value;
         total.min += roll.min;
         total.max += roll.max;

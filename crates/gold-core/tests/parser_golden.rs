@@ -1,5 +1,6 @@
 //! Compares the Rust parser with the golden outputs on a corpus of item
 //! texts. `tests/golden/*.json` holds the expected output.
+#![expect(clippy::unwrap_used, reason = "tests")]
 use gold_core::data::GameData;
 use gold_core::parser::parse_clipboard;
 use regex::Regex;
@@ -18,27 +19,27 @@ fn normalise(v: Value) -> Value {
 /// Path of the first difference, with both values.
 fn first_diff(a: &Value, b: &Value, path: &str) -> Option<String> {
     match (a, b) {
-        (Value::Object(x), Value::Object(y)) => {
-            for k in x.keys().chain(y.keys().filter(|k| !x.contains_key(*k))) {
-                match (x.get(k), y.get(k)) {
-                    (Some(p), Some(q)) => {
-                        if let Some(d) = first_diff(p, q, &format!("{path}.{k}")) {
+        (Value::Object(left), Value::Object(right)) => {
+            for key in left.keys().chain(right.keys().filter(|k| !left.contains_key(*k))) {
+                match (left.get(key), right.get(key)) {
+                    (Some(lv), Some(rv)) => {
+                        if let Some(d) = first_diff(lv, rv, &format!("{path}.{key}")) {
                             return Some(d);
                         }
                     }
-                    (p, q) => return Some(format!("{path}.{k}: rust={p:?} ts={q:?}")),
+                    (lv, rv) => return Some(format!("{path}.{key}: rust={lv:?} ts={rv:?}")),
                 }
             }
             None
         }
-        (Value::Array(x), Value::Array(y)) => {
-            if x.len() != y.len() {
-                return Some(format!("{path}: array length rust={} ts={}", x.len(), y.len()));
+        (Value::Array(left), Value::Array(right)) => {
+            if left.len() != right.len() {
+                return Some(format!("{path}: array length rust={} ts={}", left.len(), right.len()));
             }
-            x.iter()
-                .zip(y)
+            left.iter()
+                .zip(right)
                 .enumerate()
-                .find_map(|(i, (p, q))| first_diff(p, q, &format!("{path}[{i}]")))
+                .find_map(|(i, (lv, rv))| first_diff(lv, rv, &format!("{path}[{i}]")))
         }
         _ if a == b => None,
         _ => Some(format!("{path}: rust={a} ts={b}")),
@@ -57,7 +58,7 @@ fn split_corpus(input: &str) -> Vec<String> {
 #[test]
 fn rust_parser_matches_golden() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let data = GameData::load(&root.join("../../assets"), "en").unwrap();
+    let data = GameData::load(&root.join("../../assets")).unwrap();
 
     let mut checked = 0;
     let mut failures = Vec::new();

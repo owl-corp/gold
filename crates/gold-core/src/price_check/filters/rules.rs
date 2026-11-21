@@ -1,15 +1,16 @@
 //! Rules for maps, charts, heists and flasks.
 use super::pseudo::{no_source_pseudo_to_filter, prop_to_filter, prop_to_filter_in_range, pseudo_stat, PropFilter};
 use super::stat_filters::Ctx;
-use super::*;
-use crate::data::{Stat, StatGroup, StatGroupResolver, StatOrGroup};
+use super::{FilterTag, StatFilter};
+use crate::data::{Stat, StatGroupResolver, StatOrGroup};
+use crate::parser::advanced::Generation;
 use crate::parser::item::ItemRarity;
 use crate::parser::meta::{is, Category, ItemCategory};
 use crate::parser::modifiers::{ModifierType, StatRoll};
 use crate::parser::stat_translations::resolve_translation;
 use anyhow::{anyhow, bail, Result};
 
-const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
+const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
 /// `findAndResolveByRef` without a hint: groups that merge several stats can't be resolved.
 pub fn find_and_resolve_by_ref(
@@ -24,19 +25,11 @@ pub fn find_and_resolve_by_ref(
         .by_ref(name)
         .ok_or_else(|| anyhow!("Unexpected stat shape: {name}"))?;
     let stat = match found {
-        StatOrGroup::Stat(s) => Some(s),
+        StatOrGroup::Stat(s) => Some((**s).clone()),
         StatOrGroup::Group(g) => match g.resolve {
-            StatGroupResolver::Select { .. } | StatGroupResolver::TrivialMerge => resolve_translation(
-                StatGroup {
-                    resolve: g.resolve,
-                    stats: g.stats,
-                    extra: g.extra,
-                },
-                "",
-                mod_type,
-                category,
-                None,
-            ),
+            StatGroupResolver::Select { .. } | StatGroupResolver::TrivialMerge => {
+                resolve_translation(g, "", mod_type, category, None)
+            }
             _ => None,
         },
     };
@@ -50,11 +43,11 @@ fn stat_to_not_filter(stat: &Stat, type_: ModifierType, negate_string: bool, dis
         .matchers
         .iter()
         .find(|m| m.negate.unwrap_or(false) == negate_string)
-        .unwrap_or(&stat.matchers[0]);
+        .or_else(|| stat.matchers.first());
     StatFilter {
         trade_id: stat.trade.ids.get(type_.as_str()).cloned().unwrap_or_default(),
         stat_ref: stat.ref_.clone(),
-        text: matcher.string.clone(),
+        text: matcher.map(|m| m.string.clone()).unwrap_or_default(),
         tag: FilterTag(type_.as_str()),
         oils: None,
         sources: vec![],
@@ -66,7 +59,7 @@ fn stat_to_not_filter(stat: &Stat, type_: ModifierType, negate_string: bool, dis
     }
 }
 
-fn big_roll(value: f64) -> StatRoll {
+const fn big_roll(value: f64) -> StatRoll {
     StatRoll {
         value,
         min: 0.0,
@@ -74,10 +67,11 @@ fn big_roll(value: f64) -> StatRoll {
     }
 }
 
-fn truthy(v: Option<f64>) -> Option<f64> {
-    v.filter(|v| *v != 0.0 && !v.is_nan())
+fn truthy(v: Option<i64>) -> Option<i64> {
+    v.filter(|v| *v != 0)
 }
 
+#[derive(Clone, Copy)]
 struct AreaDisabled {
     item_quantity: bool,
     item_rarity: bool,
@@ -88,19 +82,19 @@ fn area_props(ctx: &mut Ctx, disabled: AreaDisabled) -> Result<()> {
     let item = ctx.item;
     for (value, ref_, trade_id, off) in [
         (
-            item.area_item_quantity,
+            item.map.item_quantity,
             "Item Quantity: +#%",
             "item.map_item_quantity",
             disabled.item_quantity,
         ),
         (
-            item.area_item_rarity,
+            item.map.item_rarity,
             "Item Rarity: +#%",
             "item.map_item_rarity",
             disabled.item_rarity,
         ),
         (
-            item.area_pack_size,
+            item.map.pack_size,
             "Monster Pack Size: +#%",
             "item.map_pack_size",
             disabled.pack_size,
@@ -112,7 +106,7 @@ fn area_props(ctx: &mut Ctx, disabled: AreaDisabled) -> Result<()> {
                 PropFilter {
                     ref_,
                     trade_id,
-                    roll: Some(big_roll(v)),
+                    roll: Some(big_roll(v as f64)),
                     sources: vec![],
                     dp: false,
                     disabled: Some(off),
@@ -128,14 +122,14 @@ fn area_props(ctx: &mut Ctx, disabled: AreaDisabled) -> Result<()> {
 pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
     let item = ctx.item;
     if !is(&item.category, ItemCategory::Map)
-        || item.map_completion_reward.is_some()
+        || item.map.completion_reward.is_some()
         || item.rarity == Some(ItemRarity::Unique)
     {
         return Ok(());
     }
 
     if !bulk {
-        let has_valuable_drops = truthy(item.map_more_currency).is_some() || truthy(item.map_more_div_cards).is_some();
+        let has_valuable_drops = truthy(item.map.more_currency).is_some() || truthy(item.map.more_div_cards).is_some();
 
         area_props(
             ctx,
@@ -147,9 +141,9 @@ pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
         )?;
 
         for (value, ref_, disabled) in [
-            (item.map_more_maps, "More Maps: #%", true),
-            (item.map_more_currency, "More Currency: #%", false),
-            (item.map_more_div_cards, "More Divination Cards: #%", false),
+            (item.map.more_maps, "More Maps: #%", true),
+            (item.map.more_currency, "More Currency: #%", false),
+            (item.map.more_div_cards, "More Divination Cards: #%", false),
         ] {
             if let Some(v) = truthy(value) {
                 let pseudo = pseudo_stat(ctx.data, ref_).ok_or_else(|| anyhow!("missing pseudo stat {ref_}"))?;
@@ -157,7 +151,7 @@ pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
                     ctx,
                     ctx.search_in_range,
                     pseudo,
-                    Some(big_roll(v)),
+                    Some(big_roll(v as f64)),
                     false,
                     Some(disabled),
                     None,
@@ -167,7 +161,6 @@ pub fn map_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
         }
     }
 
-    use crate::parser::advanced::Generation;
     let explicit_mods = item
         .new_mods
         .iter()
@@ -201,13 +194,13 @@ pub fn chart_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
         },
     )?;
 
-    if let Some(v) = truthy(item.chart_sulphur) {
+    if let Some(v) = truthy(item.map.chart_sulphur) {
         let f = prop_to_filter(
             ctx,
             PropFilter {
                 ref_: "Dead Man's Sulphur: +#%",
-                trade_id: "item.chart_sulphur",
-                roll: Some(big_roll(v)),
+                trade_id: "item.map.chart_sulphur",
+                roll: Some(big_roll(v as f64)),
                 sources: vec![],
                 dp: false,
                 disabled: Some(false),
@@ -220,7 +213,7 @@ pub fn chart_props(bulk: bool, ctx: &mut Ctx) -> Result<()> {
 }
 
 pub fn valdo_bad_mods(ctx: &mut Ctx) -> Result<()> {
-    if ctx.item.map_completion_reward.is_none() {
+    if ctx.item.map.completion_reward.is_none() {
         return Ok(());
     }
     for lethal in ["Players who Die in area are sent to the Void"] {
@@ -245,7 +238,7 @@ fn apply_contract_rules(ctx: &mut Ctx) -> Result<()> {
         return Ok(());
     }
 
-    if let Some(contract) = &item.heist_contract {
+    if let Some(contract) = &item.heist.contract {
         if let (Some(job), Some(level)) = (contract.required_job, truthy(contract.job_level)) {
             let id = match job {
                 "Lockpicking" => "item.heist_job_lockpicking",
@@ -265,7 +258,7 @@ fn apply_contract_rules(ctx: &mut Ctx) -> Result<()> {
                 PropFilter {
                     ref_: id,
                     trade_id: id,
-                    roll: Some(big_roll(level)),
+                    roll: Some(big_roll(level as f64)),
                     sources: vec![],
                     dp: false,
                     disabled: Some(false),
@@ -307,7 +300,8 @@ fn apply_blueprint_rules(ctx: &mut Ctx) -> Result<()> {
     }
 
     let blueprint = item
-        .heist_blueprint
+        .heist
+        .blueprint
         .as_ref()
         .ok_or_else(|| anyhow!("blueprint without data"))?;
     for (value, ref_, id) in [
@@ -325,7 +319,7 @@ fn apply_blueprint_rules(ctx: &mut Ctx) -> Result<()> {
             PropFilter {
                 ref_,
                 trade_id: id,
-                roll: Some(big_roll(value)),
+                roll: Some(big_roll(value as f64)),
                 sources: vec![],
                 dp: false,
                 disabled: Some(false),

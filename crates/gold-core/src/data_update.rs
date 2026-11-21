@@ -102,7 +102,7 @@ struct Known {
     namespace: String,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Extra {
     /// `items.ndjson` lines for the missing items.
     pub lines: Vec<String>,
@@ -121,11 +121,50 @@ fn enshrouded_category(name: &str) -> Option<&'static str> {
         .find(|c| name.ends_with(c))
 }
 
-/// `trade_items` and `static_data` are the API responses, `shipped` the shipped `items.ndjson`.
-pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Result<Extra> {
-    let response: Response = serde_json::from_str(trade_items).context("trade items response")?;
-    let statics: StaticResponse = serde_json::from_str(static_data).context("trade static response")?;
+/// Sets a field on a JSON object record (appended last when new, like indexing would).
+fn set(record: &mut Value, key: &str, value: Value) {
+    if let Some(o) = record.as_object_mut() {
+        o.insert(key.to_string(), value);
+    }
+}
 
+/// The record a trade entry of the given group shape becomes, with its namespace.
+fn shape_record(shape: &Shape, name: &str, icon: &str) -> (&'static str, Value) {
+    match shape {
+        Shape::Base(category) => {
+            let mut r = json!({"name": name, "refName": name, "namespace": "ITEM", "icon": icon});
+            if let Some(c) = category {
+                set(&mut r, "craftable", json!({ "category": c }));
+            }
+            ("ITEM", r)
+        }
+        Shape::Enshrouded => {
+            let mut r = json!({"name": name, "refName": name, "namespace": "ITEM", "icon": icon});
+            if let Some(c) = enshrouded_category(name) {
+                set(&mut r, "craftable", json!({ "category": c }));
+            }
+            ("ITEM", r)
+        }
+        Shape::Card => (
+            "DIVINATION_CARD",
+            json!({"name": name, "refName": name, "namespace": "DIVINATION_CARD", "icon": icon}),
+        ),
+        Shape::Beast => (
+            "CAPTURED_BEAST",
+            json!({"name": name, "refName": name, "namespace": "CAPTURED_BEAST", "icon": icon}),
+        ),
+        Shape::Gem => (
+            "GEM",
+            json!({"name": name, "refName": name, "namespace": "GEM", "icon": icon, "gem": {"maxLevel": 20}}),
+        ),
+    }
+}
+
+/// `(namespace, name)` pairs and base type names.
+type KnownItems = (HashSet<(String, String)>, HashSet<String>);
+
+/// Like the shipped data, but the base type names also include the ones this update adds.
+fn known_and_bases(response: &Response, shipped: &str) -> Result<KnownItems> {
     let mut known: HashSet<(String, String)> = HashSet::new();
     let mut bases = HashSet::new();
     for (n, line) in shipped.lines().enumerate() {
@@ -146,14 +185,44 @@ pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Resul
             bases.insert(e.base.clone());
         }
     }
+    Ok((known, bases))
+}
 
-    // name -> (group, id, image); the first group wins, as in the shipped data
-    let mut by_text: HashMap<&str, (&str, &str, Option<&str>)> = HashMap::new();
+/// name -> (group, id, image); the first group wins, as in the shipped data
+fn static_by_text(statics: &StaticResponse) -> HashMap<&str, (&str, &str, Option<&str>)> {
+    let mut by_text = HashMap::new();
     for g in &statics.result {
         for e in &g.entries {
-            by_text.entry(&e.text).or_insert((&g.id, &e.id, e.image.as_deref()));
+            by_text
+                .entry(e.text.as_str())
+                .or_insert((g.id.as_str(), e.id.as_str(), e.image.as_deref()));
         }
     }
+    by_text
+}
+
+/// Cards and currency-like items the static list knows trade in bulk.
+fn mark_exchangeable(namespace: &str, record: &mut Value, static_id: Option<&str>) {
+    if namespace == "DIVINATION_CARD" && static_id.is_some() {
+        set(record, "exchangeable", json!(true));
+    }
+    // currency-like items trade in bulk under the static list's id
+    if namespace == "ITEM" {
+        if let Some(id) = static_id {
+            set(record, "tradeTag", json!(id));
+            set(record, "exchangeable", json!(true));
+        }
+    }
+}
+
+/// `trade_items` and `static_data` are the API responses, `shipped` the shipped `items.ndjson`.
+pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Result<Extra> {
+    let response: Response = serde_json::from_str(trade_items).context("trade items response")?;
+    let statics: StaticResponse = serde_json::from_str(static_data).context("trade static response")?;
+
+    let (known, bases) = known_and_bases(&response, shipped)?;
+
+    let by_text = static_by_text(&statics);
     let icon = |name: &str| match by_text.get(name) {
         Some((_, _, Some(image))) => format!("{POE_CDN}{image}"),
         _ => String::new(),
@@ -162,7 +231,11 @@ pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Resul
     let mut out = Extra::default();
     let mut added: HashSet<(&'static str, String)> = HashSet::new();
     let mut push = |out: &mut Extra, namespace: &'static str, record: Value| {
-        let name = record["name"].as_str().unwrap_or_default().to_string();
+        let name = record
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         if known.contains(&(namespace.to_string(), name.clone())) || !added.insert((namespace, name)) {
             return false;
         }
@@ -198,51 +271,14 @@ pub fn extra_items(trade_items: &str, static_data: &str, shipped: &str) -> Resul
             }
             let name = &e.base;
             let stat = by_text.get(name.as_str());
-            let record = match shape {
-                None => {
-                    if !bases.contains(name) {
-                        out.unmapped += 1;
-                    }
-                    continue;
+            let Some(shape) = shape else {
+                if !bases.contains(name) {
+                    out.unmapped += 1;
                 }
-                Some(Shape::Base(category)) => {
-                    let mut r = json!({"name": name, "refName": name, "namespace": "ITEM", "icon": icon(name)});
-                    if let Some(c) = category {
-                        r["craftable"] = json!({ "category": c });
-                    }
-                    ("ITEM", r)
-                }
-                Some(Shape::Enshrouded) => {
-                    let mut r = json!({"name": name, "refName": name, "namespace": "ITEM", "icon": icon(name)});
-                    if let Some(c) = enshrouded_category(name) {
-                        r["craftable"] = json!({ "category": c });
-                    }
-                    ("ITEM", r)
-                }
-                Some(Shape::Card) => (
-                    "DIVINATION_CARD",
-                    json!({"name": name, "refName": name, "namespace": "DIVINATION_CARD", "icon": icon(name)}),
-                ),
-                Some(Shape::Beast) => (
-                    "CAPTURED_BEAST",
-                    json!({"name": name, "refName": name, "namespace": "CAPTURED_BEAST", "icon": icon(name)}),
-                ),
-                Some(Shape::Gem) => (
-                    "GEM",
-                    json!({"name": name, "refName": name, "namespace": "GEM", "icon": icon(name), "gem": {"maxLevel": 20}}),
-                ),
+                continue;
             };
-            let (namespace, mut record) = record;
-            if namespace == "DIVINATION_CARD" && stat.is_some() {
-                record["exchangeable"] = json!(true);
-            }
-            // currency-like items trade in bulk under the static list's id
-            if namespace == "ITEM" {
-                if let Some((_, id, _)) = stat {
-                    record["tradeTag"] = json!(id);
-                    record["exchangeable"] = json!(true);
-                }
-            }
+            let (namespace, mut record) = shape_record(shape, name, &icon(name));
+            mark_exchangeable(namespace, &mut record, stat.map(|(_, id, _)| *id));
             if push(&mut out, namespace, record) {
                 out.bases += 1;
             }
@@ -333,7 +369,7 @@ enum ShippedLine {
     Stat(ShippedStat),
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct ExtraStats {
     /// `stats.extra.ndjson` lines: whole stats and `{"patch": ...}` lines.
     pub lines: Vec<String>,
@@ -349,6 +385,9 @@ pub struct ExtraStats {
 /// Trade stat types that are not read from item text (`pseudo` is built by hand, the
 /// crucible tree is retired).
 const STAT_SKIP: [&str; 2] = ["pseudo", "crucible"];
+
+/// ref -> (stats with that ref, whether it is one plain stat) and its trade id types
+type RefInfo = (usize, bool, BTreeMap<String, Vec<String>>);
 
 /// The line a stat has on an item: no "(Local)" suffix.
 fn stat_text(text: &str) -> &str {
@@ -374,8 +413,7 @@ pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
 
     let mut have_ids: HashSet<String> = HashSet::new();
     let mut matchers: HashSet<String> = HashSet::new();
-    // ref -> (stats with that ref, whether it is one plain stat) and its trade id types
-    let mut refs: HashMap<String, (usize, bool, BTreeMap<String, Vec<String>>)> = HashMap::new();
+    let mut refs: HashMap<String, RefInfo> = HashMap::new();
     for (n, line) in shipped.lines().enumerate() {
         let line: ShippedLine = serde_json::from_str(line).with_context(|| format!("stats.ndjson line {}", n + 1))?;
         let (stats, plain) = match line {
@@ -388,7 +426,7 @@ pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
                 matchers.extend(m.advanced.clone());
             }
             have_ids.extend(s.trade.ids.values().flatten().cloned());
-            let entry = refs.entry(s.ref_).or_insert((0, plain, s.trade.ids.clone()));
+            let entry = refs.entry(s.ref_).or_insert_with(|| (0, plain, s.trade.ids.clone()));
             entry.0 += 1;
         }
     }
@@ -412,7 +450,7 @@ pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
 
     let mut out = ExtraStats::default();
     for text in order {
-        let by_type = &missing[text];
+        let Some(by_type) = missing.get(text) else { continue };
         if by_type.values().any(|ids| ids.len() > 1) || text == "#" {
             out.skipped += 1;
             continue;
@@ -440,9 +478,8 @@ pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
         let mut list = vec![json!({"string": plain})];
         if let Some((from, to)) = NEGATED.iter().find(|(from, _)| plain.contains(from)) {
             let negated = plain.replacen(from, to, 1);
-            if !matchers.contains(&negated) {
+            if matchers.insert(negated.clone()) {
                 list.push(json!({"string": negated, "negate": true}));
-                matchers.insert(negated);
             }
         }
         matchers.insert(plain);
@@ -455,6 +492,7 @@ pub fn extra_stats(trade_stats: &str, shipped: &str) -> Result<ExtraStats> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic, reason = "tests")]
 mod tests {
     use super::*;
 
@@ -494,9 +532,12 @@ mod tests {
 
     #[test]
     fn skips_known_items_and_unmapped_groups() {
-        assert!(extra(r#"{"type":"Coral Ring"}"#, "viscera").lines.is_empty());
+        assert_eq!(
+            extra(r#"{"type":"Coral Ring"}"#, "viscera").lines,
+            [] as [std::string::String; 0]
+        );
         let other = extra(r#"{"type":"Mystery"}"#, "newgroup");
-        assert!(other.lines.is_empty());
+        assert_eq!(other.lines, [] as [std::string::String; 0]);
         assert_eq!(other.unmapped, 1);
     }
 
@@ -572,7 +613,10 @@ mod tests {
         let extra = extra(r#"{"type":"Primate Foot"}"#, "viscera");
         let db = crate::data::ItemDb::parse(&format!("{SHIPPED}{}\n", extra.lines.join("\n"))).unwrap();
         let found = db.by_translated("ITEM", "Primate Foot").unwrap();
-        assert_eq!(found[0].craftable.as_ref().unwrap().category.known(), None);
+        assert_eq!(
+            found[0].craftable.as_ref().unwrap().category.known(),
+            Some(crate::parser::meta::ItemCategory::Viscera)
+        );
     }
 
     const SHIPPED_STATS: &str = concat!(
@@ -610,7 +654,7 @@ mod tests {
     #[test]
     fn known_stats_get_patched_with_missing_types_only() {
         let (e, lines) = stat_lines(
-            r##"{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_8","text":"Grouped","type":"implicit"}"##,
+            r#"{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_8","text":"Grouped","type":"implicit"}"#,
         );
         assert_eq!((e.added, e.patched, e.skipped), (0, 1, 1));
         assert_eq!(lines[0]["patch"], "+# to Strength");
@@ -620,7 +664,7 @@ mod tests {
     #[test]
     fn ambiguous_and_known_ids_are_skipped() {
         let (e, _) = stat_lines(
-            r##"{"id":"explicit.stat_1","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_3","text":"Twin","type":"implicit"},{"id":"implicit.stat_4","text":"Twin (Local)","type":"implicit"}"##,
+            r#"{"id":"explicit.stat_1","text":"+# to Strength","type":"implicit"},{"id":"implicit.stat_3","text":"Twin","type":"implicit"},{"id":"implicit.stat_4","text":"Twin (Local)","type":"implicit"}"#,
         );
         assert_eq!((e.added, e.patched, e.skipped), (0, 0, 1));
     }
@@ -628,11 +672,14 @@ mod tests {
     #[test]
     fn extra_stats_load_into_the_stat_db() {
         let (_, lines) = stat_lines(
-            r##"{"id":"implicit.stat_5","text":"+#% to Foo","type":"implicit"},{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"}"##,
+            r#"{"id":"implicit.stat_5","text":"+#% to Foo","type":"implicit"},{"id":"implicit.stat_7","text":"+# to Strength","type":"implicit"}"#,
         );
         let db = crate::data::StatDb::parse_with_extra(
             SHIPPED_STATS,
-            &lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
+            &lines
+                .iter()
+                .flat_map(|l| [l.to_string(), "\n".to_string()])
+                .collect::<String>(),
         )
         .unwrap();
         assert!(db.by_match_str("#% to Foo").is_some());

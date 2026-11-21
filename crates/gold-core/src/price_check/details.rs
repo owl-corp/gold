@@ -6,7 +6,7 @@ use crate::parser::modifiers::ModifierType;
 
 pub const SPECIAL_SUPPORT_GEM: [&str; 3] = ["Empower Support", "Enlighten Support", "Enhance Support"];
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DetailsId {
     pub ns: String,
     pub name: String,
@@ -14,6 +14,7 @@ pub struct DetailsId {
 }
 
 /// Normal, magic and rare equipment is priced by its base type.
+#[must_use]
 pub fn is_valuable_basetype(item: &ParsedItem) -> bool {
     if !matches!(
         item.rarity,
@@ -31,13 +32,13 @@ pub fn get_details_id(item: &ParsedItem) -> Option<DetailsId> {
     }
     if is(&item.category, ItemCategory::Map) {
         let tier = if item.rarity == Some(ItemRarity::Unique) {
-            0.0
+            0
         } else {
-            item.map_tier.unwrap_or(0.0)
+            item.map.tier.unwrap_or(0)
         };
         let kind = if item.rarity == Some(ItemRarity::Unique) {
             None
-        } else if item.map_tier.is_some_and(|t| t != 0.0) {
+        } else if item.map.tier.is_some_and(|t| t != 0) {
             Some("Gen-24")
         } else {
             Some("Atlas")
@@ -45,7 +46,7 @@ pub fn get_details_id(item: &ParsedItem) -> Option<DetailsId> {
         return Some(DetailsId {
             ns: item.info.namespace.clone(),
             name: item.info.ref_name.clone(),
-            variant: variant(&[Some(format!("T{}", num(tier))), kind.map(String::from)]),
+            variant: variant(&[Some(format!("T{tier}")), kind.map(String::from)]),
         });
     }
     if item.rarity == Some(ItemRarity::Unique) {
@@ -60,15 +61,14 @@ pub fn get_details_id(item: &ParsedItem) -> Option<DetailsId> {
             .sources
             .first()?
             .contributes
-            .map(|c| num(c.value))
-            .unwrap_or_else(|| "undefined".into());
+            .map_or_else(|| "undefined".into(), |c| num(c.value));
         return Some(DetailsId {
             ns: item.info.namespace.clone(),
             name: stat.stat.ref_.replacen('#', &value, 1),
-            variant: Some(num(floor_to_bracket(
-                item.item_level.unwrap_or(f64::NAN),
-                &[1.0, 70.0, 80.0, 84.0],
-            ))),
+            // without an item level no bracket applies
+            variant: item
+                .item_level
+                .map(|ilvl| floor_to_bracket(ilvl, &[1, 70, 80, 84]).to_string()),
         });
     }
     Some(DetailsId {
@@ -82,7 +82,7 @@ pub fn get_details_id(item: &ParsedItem) -> Option<DetailsId> {
 fn num(x: f64) -> String {
     if x.is_nan() {
         "NaN".into()
-    } else if x == x.trunc() && x.abs() < 1e15 {
+    } else if crate::js::eq(x, x.trunc()) && x.abs() < 1e15 {
         format!("{}", x as i64)
     } else {
         format!("{x}")
@@ -92,26 +92,28 @@ fn num(x: f64) -> String {
 fn for_skill_gem(item: &ParsedItem) -> DetailsId {
     let name = item.info.ref_name.as_str();
     let special = SPECIAL_SUPPORT_GEM.contains(&name);
-    let level = item.gem_level.unwrap_or(f64::NAN);
+    let level = item.gem.level;
 
     let mut v = String::new();
-    if special || name == "Portal" || name == "Brand Recall" || name == "Blood and Sand" || level >= 20.0 {
-        v += &num(level);
+    if special
+        || name == "Portal"
+        || name == "Brand Recall"
+        || name == "Blood and Sand"
+        || level.is_some_and(|l| l >= 20)
+    {
+        v += &level.map(|l| l.to_string()).unwrap_or_default();
     } else {
         v += "1";
     }
-    if let Some(quality) = item.quality.filter(|q| *q != 0.0 && !q.is_nan()) {
-        if !special && !(name == "Brand Recall" && item.is_corrupted) {
+    if let Some(quality) = item.quality.filter(|q| *q != 0) {
+        if !(special || (name == "Brand Recall" && item.status.is_corrupted)) {
             // Gem Q20 with up to 4xGCP
-            let q = if (16.0..=20.0).contains(&quality) {
-                20.0
-            } else {
-                quality
-            };
-            v += &format!("/{}", num(q));
+            let q = if (16..=20).contains(&quality) { 20 } else { quality };
+            v.push('/');
+            v += &q.to_string();
         }
     }
-    if item.is_corrupted && name != "Portal" {
+    if item.status.is_corrupted && name != "Portal" {
         v += "c";
     }
 
@@ -126,12 +128,12 @@ fn for_basetype(item: &ParsedItem) -> Option<DetailsId> {
     if item.influences.len() > 1 {
         return None;
     }
-    let ilvl = item.item_level.unwrap_or(f64::NAN);
+    let ilvl = item.item_level;
     Some(DetailsId {
         ns: item.info.namespace.clone(),
         name: item.info.ref_name.clone(),
         variant: variant(&[
-            Some(if ilvl >= 86.0 { "86+".to_string() } else { num(ilvl) }),
+            ilvl.map(|l| if l >= 86 { "86+".to_string() } else { l.to_string() }),
             item.influences.first().map(|i| format!("{i:?}")),
         ]),
     })
@@ -152,10 +154,7 @@ fn for_unique_item(item: &ParsedItem) -> Option<DetailsId> {
         variant: variant(&[
             unique_variant(item).map(String::from),
             kind,
-            item.sockets
-                .as_ref()
-                .and_then(|s| s.linked)
-                .map(|l| format!("{}L", num(l))),
+            item.sockets.as_ref().and_then(|s| s.linked).map(|l| format!("{l}L")),
         ]),
     })
 }
@@ -169,45 +168,117 @@ fn has_stat(item: &ParsedItem, stat: &str) -> bool {
     item.stats_by_type.iter().any(|m| m.stat.ref_ == stat)
 }
 
+/// Uniques whose variant is the first label with all of its stats on the item.
+type VariantRule = (&'static str, &'static [&'static str]);
+
+const VARIANT_RULES: &[(&str, &[VariantRule])] = &[
+    (
+        "Vessel of Vinktar",
+        &[
+            ("Added Attacks", &["Adds # to # Lightning Damage to Attacks during Flask effect"]),
+            ("Added Spells", &["Adds # to # Lightning Damage to Spells during Flask effect"]),
+            ("Penetration", &["Damage Penetrates #% Lightning Resistance during Flask effect"]),
+            ("Conversion", &["#% of Physical Damage Converted to Lightning during Flask effect"]),
+        ],
+    ),
+    (
+        "Atziri's Splendour",
+        &[
+            ("Armour/Evasion/ES", &["#% increased Armour, Evasion and Energy Shield"]),
+            (
+                "Evasion/ES",
+                &["#% increased Evasion and Energy Shield", "+# to maximum Energy Shield"],
+            ),
+            (
+                "Evasion/ES/Life",
+                &["#% increased Evasion and Energy Shield", "+# to maximum Life"],
+            ),
+            (
+                "Armour/ES",
+                &["#% increased Armour and Energy Shield", "+# to maximum Energy Shield"],
+            ),
+            (
+                "Armour/ES/Life",
+                &["#% increased Armour and Energy Shield", "+# to maximum Life"],
+            ),
+            ("Armour/Evasion", &["#% increased Armour and Evasion", "+# to maximum Life"]),
+            ("ES", &["+# to maximum Energy Shield", "#% increased Energy Shield"]),
+            ("Evasion", &["#% increased Evasion Rating", "+# to maximum Life"]),
+            ("Armour", &["#% increased Armour", "+# to maximum Life"]),
+        ],
+    ),
+    (
+        "Volkuur's Guidance",
+        &[
+            ("Cold", &["Adds # to # Cold Damage to Spells and Attacks"]),
+            ("Fire", &["Adds # to # Fire Damage to Spells and Attacks"]),
+            ("Lightning", &["Adds # to # Lightning Damage to Spells and Attacks"]),
+        ],
+    ),
+    (
+        "Yriel's Fostering",
+        &[
+            (
+                "Maim",
+                &["Projectiles from Attacks have #% chance to Maim on Hit while\nyou have a Bestial Minion"],
+            ),
+            (
+                "Poison",
+                &["Projectiles from Attacks have #% chance to Poison on Hit while\nyou have a Bestial Minion"],
+            ),
+            (
+                "Bleeding",
+                &["Projectiles from Attacks have #% chance to inflict Bleeding on Hit while\nyou have a Bestial Minion"],
+            ),
+        ],
+    ),
+    (
+        "Doryani's Invitation",
+        &[
+            ("Physical", &["#% increased Global Physical Damage"]),
+            ("Fire", &["#% increased Fire Damage"]),
+            ("Cold", &["#% increased Cold Damage"]),
+            ("Lightning", &["#% increased Lightning Damage"]),
+        ],
+    ),
+    (
+        "Impresence",
+        &[
+            ("Cold", &["Adds # to # Cold Damage"]),
+            ("Chaos", &["Adds # to # Chaos Damage"]),
+            ("Fire", &["Adds # to # Fire Damage"]),
+            ("Lightning", &["Adds # to # Lightning Damage"]),
+            ("Physical", &["Adds # to # Physical Damage"]),
+        ],
+    ),
+    (
+        "The First Crest",
+        &[
+            (
+                "Experience",
+                &["Aureus Coins are converted to Experience upon defeating the Herald of the Scourge"],
+            ),
+            (
+                "Relics",
+                &["Aureus Coins are converted to Relics upon defeating the Herald of the Scourge"],
+            ),
+            (
+                "Tainted Currency",
+                &["Aureus Coins are converted to Tainted Currency upon defeating the Herald of the Scourge"],
+            ),
+        ],
+    ),
+];
+
 fn unique_variant(item: &ParsedItem) -> Option<&'static str> {
-    let has = |s: &str| has_stat(item, s);
-    match item.info.ref_name.as_str() {
-        "Vessel of Vinktar" => {
-            if has("Adds # to # Lightning Damage to Attacks during Flask effect") {
-                Some("Added Attacks")
-            } else if has("Adds # to # Lightning Damage to Spells during Flask effect") {
-                Some("Added Spells")
-            } else if has("Damage Penetrates #% Lightning Resistance during Flask effect") {
-                Some("Penetration")
-            } else if has("#% of Physical Damage Converted to Lightning during Flask effect") {
-                Some("Conversion")
-            } else {
-                None
-            }
-        }
-        "Atziri's Splendour" => {
-            if has("#% increased Armour, Evasion and Energy Shield") {
-                Some("Armour/Evasion/ES")
-            } else if has("#% increased Evasion and Energy Shield") && has("+# to maximum Energy Shield") {
-                Some("Evasion/ES")
-            } else if has("#% increased Evasion and Energy Shield") && has("+# to maximum Life") {
-                Some("Evasion/ES/Life")
-            } else if has("#% increased Armour and Energy Shield") && has("+# to maximum Energy Shield") {
-                Some("Armour/ES")
-            } else if has("#% increased Armour and Energy Shield") && has("+# to maximum Life") {
-                Some("Armour/ES/Life")
-            } else if has("#% increased Armour and Evasion") && has("+# to maximum Life") {
-                Some("Armour/Evasion")
-            } else if has("+# to maximum Energy Shield") && has("#% increased Energy Shield") {
-                Some("ES")
-            } else if has("#% increased Evasion Rating") && has("+# to maximum Life") {
-                Some("Evasion")
-            } else if has("#% increased Armour") && has("+# to maximum Life") {
-                Some("Armour")
-            } else {
-                None
-            }
-        }
+    let name = item.info.ref_name.as_str();
+    if let Some((_, rules)) = VARIANT_RULES.iter().find(|(n, _)| *n == name) {
+        return rules
+            .iter()
+            .find(|(_, stats)| stats.iter().all(|s| has_stat(item, s)))
+            .map(|(label, _)| *label);
+    }
+    match name {
         "Bubonic Trail" | "Lightpoacher" | "Shroud of the Lightless" | "Tombfist" => {
             let sockets = item
                 .stats_by_type
@@ -217,58 +288,6 @@ fn unique_variant(item: &ParsedItem) -> Option<&'static str> {
                 2.0 => Some("2 Jewels"),
                 1.0 => Some("1 Jewel"),
                 _ => None,
-            }
-        }
-        "Volkuur's Guidance" => {
-            if has("Adds # to # Cold Damage to Spells and Attacks") {
-                Some("Cold")
-            } else if has("Adds # to # Fire Damage to Spells and Attacks") {
-                Some("Fire")
-            } else if has("Adds # to # Lightning Damage to Spells and Attacks") {
-                Some("Lightning")
-            } else {
-                None
-            }
-        }
-        "Yriel's Fostering" => {
-            if has("Projectiles from Attacks have #% chance to Maim on Hit while\nyou have a Bestial Minion") {
-                Some("Maim")
-            } else if has("Projectiles from Attacks have #% chance to Poison on Hit while\nyou have a Bestial Minion") {
-                Some("Poison")
-            } else if has(
-                "Projectiles from Attacks have #% chance to inflict Bleeding on Hit while\nyou have a Bestial Minion",
-            ) {
-                Some("Bleeding")
-            } else {
-                None
-            }
-        }
-        "Doryani's Invitation" => {
-            if has("#% increased Global Physical Damage") {
-                Some("Physical")
-            } else if has("#% increased Fire Damage") {
-                Some("Fire")
-            } else if has("#% increased Cold Damage") {
-                Some("Cold")
-            } else if has("#% increased Lightning Damage") {
-                Some("Lightning")
-            } else {
-                None
-            }
-        }
-        "Impresence" => {
-            if has("Adds # to # Cold Damage") {
-                Some("Cold")
-            } else if has("Adds # to # Chaos Damage") {
-                Some("Chaos")
-            } else if has("Adds # to # Fire Damage") {
-                Some("Fire")
-            } else if has("Adds # to # Lightning Damage") {
-                Some("Lightning")
-            } else if has("Adds # to # Physical Damage") {
-                Some("Physical")
-            } else {
-                None
             }
         }
         "Voices" => {
@@ -283,22 +302,12 @@ fn unique_variant(item: &ParsedItem) -> Option<&'static str> {
                 _ => None,
             }
         }
-        "The First Crest" => {
-            if has("Aureus Coins are converted to Experience upon defeating the Herald of the Scourge") {
-                Some("Experience")
-            } else if has("Aureus Coins are converted to Relics upon defeating the Herald of the Scourge") {
-                Some("Relics")
-            } else if has("Aureus Coins are converted to Tainted Currency upon defeating the Herald of the Scourge") {
-                Some("Tainted Currency")
-            } else {
-                None
-            }
-        }
         _ => None,
     }
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
     use crate::data::GameData;
@@ -306,7 +315,7 @@ mod tests {
     use std::path::Path;
 
     fn data() -> GameData {
-        GameData::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"), "en").unwrap()
+        GameData::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
     }
 
     fn id(text: &str) -> Option<DetailsId> {

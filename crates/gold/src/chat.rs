@@ -13,7 +13,8 @@ const CTRL: &str = "Control_L";
 pub async fn type_in_chat(text: &str, send: bool) -> Result<()> {
     let _guard = clipboard::BUSY
         .try_lock()
-        .map_err(|_| anyhow!("the clipboard is busy with another command"))?;
+        .ok()
+        .ok_or_else(|| anyhow!("the clipboard is busy with another command"))?;
     let saved = clipboard::read_text().await;
 
     let result = keys(text, send).await;

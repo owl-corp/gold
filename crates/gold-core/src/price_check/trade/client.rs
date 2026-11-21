@@ -1,11 +1,15 @@
 //! Search and fetch on the trade site.
+use super::bulk::BulkRequest;
 use super::limits::{prevent_queue_creation, Rules};
+use super::request::TradeRequest;
 use super::Account;
 use anyhow::{anyhow, bail, Result};
-use serde::Deserialize;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
 const CACHE_TTL: Duration = Duration::from_secs(300);
@@ -101,8 +105,9 @@ pub struct TradeClient {
 }
 
 impl TradeClient {
+    #[must_use]
     pub fn new(http: crate::http::Client, api_latency: Duration) -> Self {
-        TradeClient {
+        Self {
             http,
             search: Rules::default(),
             exchange: Rules::default(),
@@ -113,13 +118,13 @@ impl TradeClient {
     }
 
     fn cached(&self, key: &str) -> Option<Value> {
-        let mut cache = self.cache.lock().unwrap();
+        let mut cache = self.cache.lock();
         cache.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
         cache.get(key).map(|(_, v)| v.clone())
     }
 
     fn remember(&self, key: String, value: Value) {
-        self.cache.lock().unwrap().insert(key, (Instant::now(), value));
+        self.cache.lock().insert(key, (Instant::now(), value));
     }
 
     /// Reads the server's rate limit headers and adopts them.
@@ -144,8 +149,8 @@ impl TradeClient {
 
     /// POSTs a search body to `api/trade/<kind>/<league>`, with caching, rate limits and
     /// the API's error reply turned into an error. The caller checks the queue first.
-    async fn post(&self, kind: &str, rules: &Rules, league: &str, body: &Value) -> Result<Value> {
-        let key = format!("{kind}:{league}:{body}");
+    async fn post<B: Serialize + Hash>(&self, kind: &str, rules: &Rules, league: &str, body: &B) -> Result<Value> {
+        let key = cache_key(kind, league, body);
         if let Some(hit) = self.cached(&key) {
             return Ok(hit);
         }
@@ -154,7 +159,7 @@ impl TradeClient {
 
         let mut url = reqwest::Url::parse(TRADE_HOST)?;
         url.path_segments_mut()
-            .map_err(|_| anyhow!("bad url"))?
+            .map_err(|()| anyhow!("bad url"))?
             .extend(["api", "trade", kind, league]);
         let response = self
             .http
@@ -176,8 +181,8 @@ impl TradeClient {
     }
 
     /// Runs a search and returns the ids of the cheapest listings.
-    pub async fn search(&self, body: &Value, league: &str) -> Result<SearchResult> {
-        if self.cached(&format!("search:{league}:{body}")).is_none() {
+    pub async fn search(&self, body: &TradeRequest, league: &str) -> Result<SearchResult> {
+        if self.cached(&cache_key("search", league, body)).is_none() {
             prevent_queue_creation(&[(&self.search, 1), (&self.fetch, 1)])?;
         }
         Ok(serde_json::from_value(
@@ -186,8 +191,8 @@ impl TradeClient {
     }
 
     /// Runs a bulk exchange search (the "Bulk Item Exchange" of the trade site).
-    pub async fn exchange(&self, body: &Value, league: &str) -> Result<Value> {
-        if self.cached(&format!("exchange:{league}:{body}")).is_none() {
+    pub async fn exchange(&self, body: &BulkRequest, league: &str) -> Result<Value> {
+        if self.cached(&cache_key("exchange", league, body)).is_none() {
             prevent_queue_creation(&[(&self.exchange, 1)])?;
         }
         self.post("exchange", &self.exchange, league, body).await
@@ -196,39 +201,46 @@ impl TradeClient {
     /// Fetches the listings behind up to 10 result ids.
     pub async fn fetch(&self, query_id: &str, ids: &[String], my_account: Option<&str>) -> Result<Vec<PricingResult>> {
         let key = format!("fetch:{}", ids.join(","));
-        let raw: Vec<Value> = match self.cached(&key) {
-            Some(Value::Array(a)) => a,
-            _ => {
-                self.fetch.wait().await;
+        let raw: Vec<Value> = if let Some(Value::Array(a)) = self.cached(&key) {
+            a
+        } else {
+            self.fetch.wait().await;
 
-                let url = format!("{TRADE_HOST}/api/trade/fetch/{}?query={query_id}", ids.join(","));
-                let response = self.http.get(url).send().await?;
-                self.adjust(&self.fetch, response.headers());
+            let url = format!("{TRADE_HOST}/api/trade/fetch/{}?query={query_id}", ids.join(","));
+            let response = self.http.get(url).send().await?;
+            self.adjust(&self.fetch, response.headers());
 
-                let status = response.status();
-                let data: Value = response
-                    .json()
-                    .await
-                    .map_err(|e| anyhow!("trade fetch failed (HTTP {status}): {e}"))?;
-                check_api_error(&data)?;
-                let results: Vec<Value> = data["result"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|r| !r.is_null())
-                    .collect();
-                self.remember(key, Value::Array(results.clone()));
-                results
-            }
+            let status = response.status();
+            let data: Value = response
+                .json()
+                .await
+                .map_err(|e| anyhow!("trade fetch failed (HTTP {status}): {e}"))?;
+            check_api_error(&data)?;
+            let results: Vec<Value> = data
+                .get("result")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|r| !r.is_null())
+                .collect();
+            self.remember(key, Value::Array(results.clone()));
+            results
         };
 
         // one odd listing must not fail the whole page
         Ok(raw
             .into_iter()
-            .filter_map(|r| to_pricing_result(serde_json::from_value(r).ok()?, my_account).ok())
+            .filter_map(|r| Some(to_pricing_result(serde_json::from_value(r).ok()?, my_account)))
             .collect())
     }
+}
+
+/// Identifies a search by what it asks for: the hash of the typed request.
+fn cache_key(kind: &str, league: &str, body: &impl Hash) -> String {
+    let mut hasher = DefaultHasher::new();
+    body.hash(&mut hasher);
+    format!("{kind}:{league}:{:016x}", hasher.finish())
 }
 
 /// The API answers errors with `{"error": {"code": .., "message": ..}}`.
@@ -240,7 +252,7 @@ fn check_api_error(data: &Value) -> Result<()> {
     Ok(())
 }
 
-fn to_pricing_result(result: FetchResult, my_account: Option<&str>) -> Result<PricingResult> {
+fn to_pricing_result(result: FetchResult, my_account: Option<&str>) -> PricingResult {
     let FetchResult { id, item, listing } = result;
 
     let prop = |ty: i64| {
@@ -257,35 +269,36 @@ fn to_pricing_result(result: FetchResult, my_account: Option<&str>) -> Result<Pr
         listing.account.status()
     };
 
-    Ok(PricingResult {
+    PricingResult {
         id,
-        item_level: prop(78).or_else(|| Some(item.ilvl.map(|v| v.to_string()).unwrap_or_else(|| "undefined".into()))),
+        item_level: prop(78).or_else(|| Some(item.ilvl.map_or_else(|| "undefined".into(), |v| v.to_string()))),
         stack_size: item.stack_size,
         corrupted: item.corrupted,
         quality: prop(6),
         level: prop(5),
         relative_date: relative_date(&listing.indexed),
-        price_amount: listing.price.as_ref().map(|p| p.amount).unwrap_or(0.0),
+        price_amount: listing.price.as_ref().map_or(0.0, |p| p.amount),
         price_currency: listing
             .price
             .as_ref()
-            .map(|p| p.currency.clone())
-            .unwrap_or_else(|| "no price".into()),
+            .map_or_else(|| "no price".into(), |p| p.currency.clone()),
         is_mine: Some(listing.account.name.as_str()) == my_account,
         has_note: item.note.is_some(),
         has_fee: listing.fee.is_some(),
         ign: listing.account.last_character_name,
         account_name: listing.account.name,
         account_status: status,
-    })
+    }
 }
 
 /// "5 min. ago", like luxon's short relative time.
+#[must_use]
 pub fn relative_date(iso: &str) -> String {
-    let Ok(then) = chrono::DateTime::parse_from_rfc3339(iso) else {
+    use time::format_description::well_known::Rfc3339;
+    let Ok(then) = time::OffsetDateTime::parse(iso, &Rfc3339) else {
         return String::new();
     };
-    relative_from_seconds((chrono::Utc::now() - then.with_timezone(&chrono::Utc)).num_seconds())
+    relative_from_seconds((time::OffsetDateTime::now_utc() - then).whole_seconds())
 }
 
 fn relative_from_seconds(secs: i64) -> String {
@@ -304,6 +317,7 @@ fn relative_from_seconds(secs: i64) -> String {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 
@@ -327,7 +341,7 @@ mod tests {
             "account": { "name": "Someone", "lastCharacterName": "Char", "online": { "status": "afk" } }
           }
         });
-        let r = to_pricing_result(serde_json::from_value(json).unwrap(), Some("Someone")).unwrap();
+        let r = to_pricing_result(serde_json::from_value(json).unwrap(), Some("Someone"));
         assert_eq!((r.price_amount, r.price_currency.as_str()), (3.0, "divine"));
         assert_eq!(r.quality.as_deref(), Some("+20%"));
         assert_eq!(r.account_status, "afk");

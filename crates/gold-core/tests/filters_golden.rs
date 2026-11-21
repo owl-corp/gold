@@ -1,5 +1,6 @@
 //! Compares filter presets and trade requests with the golden outputs on the same
 //! corpus as `parser_golden.rs`.
+#![expect(clippy::unwrap_used, reason = "tests")]
 use gold_core::data::GameData;
 use gold_core::parser::parse_clipboard;
 use gold_core::price_check::filters::presets::{create_presets, PresetOptions, Unsupported};
@@ -19,32 +20,32 @@ fn normalise(v: Value) -> Value {
 
 fn first_diff(a: &Value, b: &Value, path: &str) -> Option<String> {
     match (a, b) {
-        (Value::Object(x), Value::Object(y)) => {
-            for k in x.keys().chain(y.keys().filter(|k| !x.contains_key(*k))) {
-                match (x.get(k), y.get(k)) {
-                    (Some(p), Some(q)) => {
-                        if let Some(d) = first_diff(p, q, &format!("{path}.{k}")) {
+        (Value::Object(left), Value::Object(right)) => {
+            for key in left.keys().chain(right.keys().filter(|k| !left.contains_key(*k))) {
+                match (left.get(key), right.get(key)) {
+                    (Some(lv), Some(rv)) => {
+                        if let Some(d) = first_diff(lv, rv, &format!("{path}.{key}")) {
                             return Some(d);
                         }
                     }
-                    (p, q) => return Some(format!("{path}.{k}: rust={p:?} ts={q:?}")),
+                    (lv, rv) => return Some(format!("{path}.{key}: rust={lv:?} ts={rv:?}")),
                 }
             }
             None
         }
-        (Value::Array(x), Value::Array(y)) => {
-            if x.len() != y.len() {
-                return Some(format!("{path}: array length rust={} ts={}", x.len(), y.len()));
+        (Value::Array(left), Value::Array(right)) => {
+            if left.len() != right.len() {
+                return Some(format!("{path}: array length rust={} ts={}", left.len(), right.len()));
             }
-            x.iter()
-                .zip(y)
+            left.iter()
+                .zip(right)
                 .enumerate()
-                .find_map(|(i, (p, q))| first_diff(p, q, &format!("{path}[{i}]")))
+                .find_map(|(i, (lv, rv))| first_diff(lv, rv, &format!("{path}[{i}]")))
         }
-        (Value::Number(x), Value::Number(y)) => {
+        (Value::Number(l), Value::Number(r)) => {
             // sums can differ in the last bit between the two languages
-            let (x, y) = (x.as_f64().unwrap(), y.as_f64().unwrap());
-            ((x - y).abs() > 1e-9 * x.abs().max(y.abs()).max(1.0)).then(|| format!("{path}: rust={x} ts={y}"))
+            let (lf, rf) = (l.as_f64()?, r.as_f64()?);
+            ((lf - rf).abs() > 1e-9 * lf.abs().max(rf.abs()).max(1.0)).then(|| format!("{path}: rust={lf} ts={rf}"))
         }
         _ if a == b => None,
         _ => Some(format!("{path}: rust={a} ts={b}")),
@@ -73,7 +74,7 @@ fn options() -> PresetOptions {
 #[test]
 fn rust_filters_match_golden() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let data = GameData::load(&root.join("../../assets"), "en").unwrap();
+    let data = GameData::load(&root.join("../../assets")).unwrap();
 
     let (mut checked, mut skipped) = (0, 0);
     let mut failures = Vec::new();
@@ -118,7 +119,7 @@ fn rust_filters_match_golden() {
                     .presets
                     .iter()
                     .map(|preset| {
-                        let request = create_trade_request(&data, &preset.filters, &preset.stats)?;
+                        let request = serde_json::to_value(create_trade_request(&data, &preset.filters, &preset.stats)?)?;
                         Ok(json!({ "id": preset.id, "filters": preset.filters, "stats": preset.stats, "request": request }))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()?;

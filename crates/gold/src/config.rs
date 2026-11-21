@@ -9,7 +9,7 @@ pub struct Config {
     pub contact: Option<String>,
     /// Trade league. Default: the current challenge league.
     pub league: Option<String>,
-    /// Directory holding `<lang>/{items,stats}.ndjson` and `client_strings.js`.
+    /// Directory holding `en/{items,stats}.ndjson` and `client_strings.json`.
     pub data_dir: Option<PathBuf>,
     /// Session cookie, only needed for searches the site restricts to logged-in users.
     pub poesessid: Option<String>,
@@ -23,30 +23,41 @@ pub struct Config {
     pub account_name: Option<String>,
 }
 
-fn config_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+/// `$<var>`, else `$HOME/<home_rel>` (an XDG base directory).
+pub fn xdg_dir(var: &str, home_rel: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("gold/config.toml"))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(home_rel)))
+}
+
+/// `$XDG_RUNTIME_DIR`, which has no `$HOME` fallback.
+pub fn xdg_runtime_dir() -> anyhow::Result<PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("XDG_RUNTIME_DIR not set"))
+}
+
+fn config_path() -> Option<PathBuf> {
+    Some(xdg_dir("XDG_CONFIG_HOME", ".config")?.join("gold/config.toml"))
 }
 
 impl Config {
-    pub fn load() -> Config {
+    pub fn load() -> Self {
         let Some(path) = config_path() else {
-            return Config::default();
+            return Self::default();
         };
         let Ok(text) = std::fs::read_to_string(&path) else {
-            return Config::default();
+            return Self::default();
         };
-        let config: Config = toml::from_str(&text).unwrap_or_else(|e| {
+        let config: Self = toml::from_str(&text).unwrap_or_else(|e| {
             // toml errors quote the offending line, which may hold the session id
             eprintln!(
                 "{}: invalid config ({})",
                 path.display(),
                 e.span()
-                    .map_or("unknown position".into(), |s| format!("bytes {}-{}", s.start, s.end))
+                    .map_or_else(|| "unknown position".into(), |s| format!("bytes {}-{}", s.start, s.end))
             );
-            Config::default()
+            Self::default()
         });
         if config.poesessid.is_some() && is_readable_by_others(&path) {
             eprintln!(
@@ -80,10 +91,7 @@ impl Config {
 
 /// Where `gold data update` writes the extra data: `$XDG_DATA_HOME/gold/data`.
 pub fn extra_data_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(base.join("gold/data"))
+    Some(xdg_dir("XDG_DATA_HOME", ".local/share")?.join("gold/data"))
 }
 
 fn is_readable_by_others(path: &std::path::Path) -> bool {

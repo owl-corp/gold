@@ -31,7 +31,7 @@
 
           postInstall = ''
             mkdir -p $out/share/gold/data/en $out/share/gold/quickshell
-            cp assets/en/{client_strings.js,items.ndjson,stats.ndjson} $out/share/gold/data/en/
+            cp assets/en/{client_strings.json,items.ndjson,stats.ndjson} $out/share/gold/data/en/
             cp quickshell/GoldOverlay.qml $out/share/gold/quickshell/
             wrapProgram $out/bin/gold --prefix PATH : ${nixpkgs.lib.makeBinPath [ pkgs.wl-clipboard ]}
           '';

@@ -13,15 +13,20 @@ use tokio::process::Command;
 fn wl_command(program: &str) -> Command {
     let mut cmd = Command::new(program);
     if std::env::var_os("WAYLAND_DISPLAY").is_none() {
-        let socket = std::env::var_os("XDG_RUNTIME_DIR")
+        let socket = crate::config::xdg_runtime_dir()
+            .ok()
             .and_then(|dir| std::fs::read_dir(dir).ok())
             .into_iter()
             .flatten()
             .flatten()
             .map(|e| e.file_name())
             .filter(|n| {
-                n.to_str()
-                    .is_some_and(|n| n.starts_with("wayland-") && !n.ends_with(".lock"))
+                n.to_str().is_some_and(|n| {
+                    n.starts_with("wayland-")
+                        && !std::path::Path::new(n)
+                            .extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("lock"))
+                })
             })
             .min();
         if let Some(socket) = socket {
@@ -61,10 +66,13 @@ pub async fn read_text() -> Option<String> {
 
 /// Puts back what `read_text` returned; an empty clipboard stays empty.
 pub async fn restore(saved: Option<String>) {
-    let _ = match saved {
+    let result = match saved {
         Some(text) => write(&text).await,
         None => clear().await,
     };
+    if let Err(e) = result {
+        eprintln!("clipboard restore failed: {e:#}");
+    }
 }
 
 pub async fn write_text(text: &str) -> Result<()> {
@@ -104,7 +112,7 @@ async fn clear() -> Result<()> {
 
 /// Copy the item under the cursor in the game and return its text.
 pub async fn copy_item() -> Result<String> {
-    let _guard = BUSY.try_lock().map_err(|_| anyhow::Error::new(Busy))?;
+    let _guard = BUSY.try_lock().map_err(|_busy| anyhow::Error::new(Busy))?;
 
     // Keep what the user had on the clipboard, unless it is an old item.
     let before = read().await.filter(|t| !is_item(t));
@@ -137,25 +145,22 @@ pub async fn copy_item() -> Result<String> {
     let Some(text) = found else {
         bail!("no item text found; is an item under the cursor?");
     };
-    log_item(&text);
+    if let Err(e) = log_item(&text) {
+        eprintln!("could not log the item: {e}");
+    }
     Ok(text)
 }
 
 /// Every copied item is appended to a log, so real items can be added to the test corpus later.
-fn log_item(text: &str) {
-    let dir = match (std::env::var("XDG_STATE_HOME"), std::env::var("HOME")) {
-        (Ok(s), _) => std::path::PathBuf::from(s),
-        (_, Ok(h)) => std::path::PathBuf::from(h).join(".local/state"),
-        _ => return,
-    }
-    .join("gold");
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+fn log_item(text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = crate::config::xdg_dir("XDG_STATE_HOME", ".local/state")
+        .ok_or_else(|| std::io::Error::other("no state directory"))?
+        .join("gold");
+    std::fs::create_dir_all(&dir)?;
+    let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("items.log"))
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{text}\n=====");
-    }
+        .open(dir.join("items.log"))?;
+    writeln!(f, "{text}\n=====")
 }

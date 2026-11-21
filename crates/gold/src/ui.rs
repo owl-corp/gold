@@ -1,24 +1,91 @@
 //! Newline-delimited JSON link to the Quickshell overlay.
 //! daemon -> UI: {"type":"show","view":{..}} | {"type":"hide"}
-//! UI -> daemon: {"type":"closed"} | any other action, e.g. {"type":"toggle","index":3}
+//! UI -> daemon: {"type":"closed"} | an `Action`, e.g. {"type":"toggle","index":3,"epoch":1}
+use crate::view::View;
 use anyhow::Result;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::broadcast;
+
+/// What the daemon sends to the overlay.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum ToUi<'a> {
+    Show { view: &'a View },
+    Hide,
+}
+
+/// What the overlay sends back. Every action carries the epoch of the view it was clicked in.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum Action {
+    /// The overlay closed itself (Esc, button).
+    Closed,
+    Toggle {
+        epoch: u64,
+        index: usize,
+    },
+    Set {
+        epoch: u64,
+        index: usize,
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+    Preset {
+        epoch: u64,
+        index: usize,
+    },
+    Search {
+        epoch: u64,
+    },
+    Hidden {
+        epoch: u64,
+    },
+    More {
+        epoch: u64,
+    },
+    Trade {
+        epoch: u64,
+        key: TradeKey,
+    },
+}
+
+/// The trade filters the overlay can flip.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TradeKey {
+    MagicOnly,
+}
+
+impl Action {
+    pub const fn epoch(&self) -> Option<u64> {
+        match self {
+            Self::Closed => None,
+            Self::Toggle { epoch, .. }
+            | Self::Set { epoch, .. }
+            | Self::Preset { epoch, .. }
+            | Self::Search { epoch }
+            | Self::Hidden { epoch }
+            | Self::More { epoch }
+            | Self::Trade { epoch, .. } => Some(*epoch),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Ui {
     out: broadcast::Sender<String>,
     closed: broadcast::Sender<()>,
-    actions: broadcast::Sender<serde_json::Value>,
+    actions: broadcast::Sender<Action>,
 }
 
 impl Ui {
-    pub fn start(path: PathBuf) -> Result<Self> {
-        let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)?;
-        let ui = Ui {
+    pub fn start(path: &Path) -> Result<Self> {
+        drop(std::fs::remove_file(path));
+        let listener = UnixListener::bind(path)?;
+        let ui = Self {
             out: broadcast::channel(64).0,
             closed: broadcast::channel(8).0,
             actions: broadcast::channel(32).0,
@@ -39,18 +106,22 @@ impl Ui {
                                     }
                                 }
                                 // a slow client skips ahead; every view is complete, so the latest wins
-                                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                                Err(broadcast::error::RecvError::Lagged(_)) => {}
                                 Err(broadcast::error::RecvError::Closed) => break,
                             }
                         }
                     });
                     let mut lines = BufReader::new(r).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        let msg: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
-                        if msg["type"] == "closed" {
-                            let _ = ui.closed.send(());
-                        } else if msg["type"].is_string() {
-                            let _ = ui.actions.send(msg);
+                        // anything that doesn't parse (unknown type, missing epoch) is ignored
+                        match serde_json::from_str::<Action>(&line) {
+                            Ok(Action::Closed) => {
+                                drop(ui.closed.send(()));
+                            }
+                            Ok(action) => {
+                                drop(ui.actions.send(action));
+                            }
+                            Err(_) => {}
                         }
                     }
                     writer.abort();
@@ -60,18 +131,22 @@ impl Ui {
         Ok(ui)
     }
 
-    pub fn show(&self, view: serde_json::Value) {
-        let _ = self
-            .out
-            .send(serde_json::json!({ "type": "show", "view": view }).to_string());
+    fn send(&self, msg: &ToUi) {
+        if let Ok(json) = serde_json::to_string(msg) {
+            drop(self.out.send(json));
+        }
+    }
+
+    pub fn show(&self, view: &View) {
+        self.send(&ToUi::Show { view });
     }
 
     pub fn hide(&self) {
-        let _ = self.out.send(r#"{"type":"hide"}"#.into());
+        self.send(&ToUi::Hide);
     }
 
     /// Everything the overlay sends except "closed": toggles, edits, search requests.
-    pub fn actions(&self) -> broadcast::Receiver<serde_json::Value> {
+    pub fn actions(&self) -> broadcast::Receiver<Action> {
         self.actions.subscribe()
     }
 

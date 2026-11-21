@@ -10,9 +10,9 @@ pub const POE_CLASS: &str = "steam_app_238960";
 const GAME_WINDOW: &str = "class:^(steam_app_238960)$";
 
 fn sock(name: &str) -> Result<PathBuf> {
-    let rt = std::env::var("XDG_RUNTIME_DIR").context("XDG_RUNTIME_DIR not set")?;
+    let rt = crate::config::xdg_runtime_dir()?;
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").context("not running under Hyprland")?;
-    Ok(PathBuf::from(rt).join("hypr").join(sig).join(name))
+    Ok(rt.join("hypr").join(sig).join(name))
 }
 
 async fn request(cmd: &str) -> Result<String> {
@@ -46,7 +46,7 @@ pub struct Monitor {
     pub transform: i32,
 }
 
-fn one() -> f64 {
+const fn one() -> f64 {
     1.0
 }
 
@@ -70,13 +70,13 @@ impl Monitor {
 
 /// The monitor under the cursor (else the focused one, else the first), and the cursor
 /// position inside it in that monitor's logical pixels, which is what a layer surface uses.
-pub fn locate(monitors: Vec<Monitor>, cursor: &Cursor) -> Option<(String, i32, i32)> {
+pub fn locate(monitors: &[Monitor], cursor: &Cursor) -> Option<(String, i32, i32)> {
     let m = monitors
         .iter()
         .position(|m| m.contains(cursor.x, cursor.y))
         .or_else(|| monitors.iter().position(|m| m.focused))
-        .or(if monitors.is_empty() { None } else { Some(0) })?;
-    let m = &monitors[m];
+        .or_else(|| (!monitors.is_empty()).then_some(0))?;
+    let m = monitors.get(m)?;
     // the cursor is in layout coordinates, which are already logical, so no scaling is needed
     Some((m.name.clone(), cursor.x - m.x, cursor.y - m.y))
 }
@@ -113,7 +113,7 @@ pub async fn tap(key: &str) -> Result<()> {
 }
 
 /// Press `modifier` + `key` in the game even when it is not focused.
-/// Hyprland's `send_shortcut` drops the modifier for this XWayland window (only
+/// Hyprland's `send_shortcut` drops the modifier for this `XWayland` window (only
 /// the bare key arrives), so the modifier is pressed as a key of its own.
 pub async fn send_combo(modifier: &str, key: &str) -> Result<()> {
     send_key_state("down", modifier).await?;
@@ -140,7 +140,7 @@ pub async fn active_class() -> Result<String> {
 
 /// Give keyboard focus back to the game, only if it lost it.
 /// A focus dispatch warps the cursor to the window centre, so skip it when
-/// Hyprland already returned focus to PoE on its own.
+/// Hyprland already returned focus to `PoE` on its own.
 pub async fn focus_game() -> Result<()> {
     // Right after the overlay closes Hyprland may not have handed focus back yet;
     // checking too early would refocus (and warp the cursor) for nothing.
@@ -152,6 +152,7 @@ pub async fn focus_game() -> Result<()> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests may panic on failure")]
 mod tests {
     use super::*;
 
@@ -179,16 +180,16 @@ mod tests {
                 mon("C", 3640, 3840, 2160, 2.0, 0),
             ]
         };
-        assert_eq!(locate(ms(), &Cursor { x: 100, y: 50 }).unwrap(), ("A".into(), 100, 50));
+        assert_eq!(locate(&ms(), &Cursor { x: 100, y: 50 }).unwrap(), ("A".into(), 100, 50));
         assert_eq!(
-            locate(ms(), &Cursor { x: 2600, y: 1800 }).unwrap(),
+            locate(&ms(), &Cursor { x: 2600, y: 1800 }).unwrap(),
             ("B".into(), 40, 1800)
         );
         assert_eq!(
-            locate(ms(), &Cursor { x: 4000, y: 1000 }).unwrap(),
+            locate(&ms(), &Cursor { x: 4000, y: 1000 }).unwrap(),
             ("C".into(), 360, 1000)
         );
         // outside everything: the focused monitor
-        assert_eq!(locate(ms(), &Cursor { x: 9000, y: 9000 }).unwrap().0, "A");
+        assert_eq!(locate(&ms(), &Cursor { x: 9000, y: 9000 }).unwrap().0, "A");
     }
 }

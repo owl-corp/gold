@@ -11,171 +11,199 @@ pub mod meta;
 pub mod modifiers;
 pub mod stat_translations;
 
-use self::advanced::*;
-use self::item::*;
+use self::advanced::{
+    group_lines_by_mod, is_mod_info_line, parse_mod_info_line, parse_mod_type, ModifierInfo, ParsedModifier,
+    ENCHANT_LINE, IMPLICIT_LINE, SCOURGE_LINE,
+};
+use self::item::{
+    HeistBlueprint, HeistContract, ItemInfluence, ItemRarity, ParsedItem, Sockets, StackSize, UnknownModifier,
+    INCURSION_OBSTRUCTED, INCURSION_OPEN,
+};
 use self::meta::{is, is_jewellery, known, Category, ItemCategory};
 use self::modifiers::{sum_stats_by_mod_type, ModifierMechanic, ModifierType};
-use self::stat_translations::*;
+use self::stat_translations::{
+    lines_to_stat_strings, roll_or_minmax_avg, try_parse_translation, ParsedStat, Roll, RollGeneration, StatString,
+};
 use crate::data::{BaseType, GameData};
 use crate::js;
-use anyhow::{anyhow, bail, Result};
 use regex::Regex;
-use std::sync::OnceLock;
+use std::borrow::Borrow;
+use std::sync::Arc;
+use std::sync::LazyLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why an item could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     /// `item.parse_error`: not an item, or the parser hit something it can't handle.
-    Parse,
+    #[error("item.parse_error: {0}")]
+    Parse(String),
     /// `item.unknown`: an item that isn't in the game data.
+    #[error("item.unknown")]
     Unknown,
 }
 
+pub type Result<T, E = ParseError> = std::result::Result<T, E>;
+
 impl ParseError {
-    pub fn code(self) -> &'static str {
+    pub fn parse(reason: impl Into<String>) -> Self {
+        Self::Parse(reason.into())
+    }
+
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
         match self {
-            ParseError::Parse => "item.parse_error",
-            ParseError::Unknown => "item.unknown",
+            Self::Parse(_) => "item.parse_error",
+            Self::Unknown => "item.unknown",
         }
     }
 }
 
-#[derive(Debug)]
-struct UnknownItem;
-
-impl std::fmt::Display for UnknownItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "item.unknown")
-    }
-}
-
-impl std::error::Error for UnknownItem {}
-
 #[derive(Debug, PartialEq, Eq)]
 enum SectionResult {
+    /// The section was understood and is consumed.
     Parsed,
+    /// Not this parser's section: offer it the next one.
     Skipped,
+    /// The parser does not apply to this item: stop offering it sections.
     ParserSkipped,
 }
-use SectionResult::*;
+use SectionResult::{Parsed, ParserSkipped, Skipped};
 
-type SectionFn = fn(&GameData, &[String], &mut ParsedItem) -> Result<SectionResult>;
+/// Parser scratch state that is not part of the result.
+#[derive(Default)]
+struct Scratch {
+    name: String,
+    base_type: Option<String>,
+    /// Every database entry the name matched; the correct one is picked at the end.
+    info_variants: Vec<BaseType>,
+}
+
+/// One section of the item text, borrowed from it.
+struct ItemSection<'a> {
+    lines: Vec<&'a str>,
+    /// Consumed by a parser; later parsers do not see it.
+    claimed: bool,
+}
+
+type SectionFn = fn(&GameData, &[&str], &mut ParsedItem) -> Result<SectionResult>;
+type PlainSectionFn = fn(&GameData, &[&str], &mut ParsedItem) -> SectionResult;
 type VirtualFn = fn(&GameData, &mut ParsedItem) -> Result<()>;
+type NamedFn = fn(&GameData, &mut ParsedItem, &mut Scratch) -> Result<()>;
 
 enum Parser {
+    /// Looks for its section; fails on malformed input.
     Section(SectionFn),
+    /// Same, but cannot fail.
+    Plain(PlainSectionFn),
+    /// A section parser that is run `n` times, claiming one section each time.
+    Repeat(usize, SectionFn),
+    /// Works on the item only, no section.
     Virtual(VirtualFn),
+    /// Same, but cannot fail.
+    PlainVirtual(fn(&GameData, &mut ParsedItem)),
+    /// Works on the item and the name scratch state.
+    Named(NamedFn),
+    /// Same, but cannot fail.
+    PlainNamed(fn(&GameData, &mut ParsedItem, &mut Scratch)),
 }
-use Parser::{Section, Virtual};
+use Parser::{Named, Plain, PlainNamed, PlainVirtual, Repeat, Section, Virtual};
 
 const PARSERS: &[Parser] = &[
-    Section(parse_unidentified),
-    Virtual(parse_superior),
-    Virtual(parse_foulborn),
-    Virtual(parse_vestigial),
-    Section(parse_synthesised),
-    Section(parse_category_by_help_text),
-    Virtual(parse_map_tier),
-    Virtual(normalize_name),
-    Virtual(find_in_database),
+    Plain(parse_unidentified),
+    PlainNamed(parse_superior),
+    PlainNamed(parse_foulborn),
+    PlainNamed(parse_vestigial),
+    Plain(parse_synthesised),
+    Named(strip_synthesised_name),
+    Plain(parse_category_by_help_text),
+    PlainNamed(parse_map_tier),
+    PlainNamed(normalize_name),
+    Named(find_in_database),
     // -----------
-    Section(parse_item_level),
+    Plain(parse_item_level),
     Section(parse_talisman_tier),
-    Section(parse_gem),
-    Section(parse_vaal_gem),
-    Section(parse_armour),
-    Section(parse_weapon),
+    Plain(parse_gem),
+    Plain(parse_vaal_gem),
+    Plain(parse_armour),
+    Plain(parse_weapon),
     Section(parse_accessory),
-    Section(parse_flask),
-    Section(parse_tincture),
+    Plain(parse_flask),
+    Plain(parse_tincture),
     Section(parse_stack_size),
-    Section(parse_corrupted),
-    Section(parse_imbued_gem),
-    Section(parse_foil),
-    Section(parse_influence),
+    Plain(parse_corrupted),
+    Plain(parse_imbued_gem),
+    Plain(parse_foil),
+    Plain(parse_influence),
     Section(parse_map),
     Section(parse_sockets),
-    Section(parse_heist_contract),
-    Section(parse_heist_blueprint),
+    Plain(parse_heist_contract),
+    Plain(parse_heist_blueprint),
     Section(parse_chart),
-    Section(parse_area_level),
-    Section(parse_atzoatl_rooms),
+    Plain(parse_area_level),
+    Plain(parse_atzoatl_rooms),
     Section(parse_filled_coffin),
-    Section(parse_mirrored),
-    Section(parse_split),
-    Section(parse_sentinel_charge),
+    Plain(parse_mirrored),
+    Plain(parse_split),
+    Plain(parse_sentinel_charge),
     Section(parse_scrying_orb),
     Section(parse_mercenary),
-    Section(parse_logbook_area),
-    Section(parse_logbook_area),
-    Section(parse_logbook_area),
-    Section(parse_mercenary_gems),
-    Section(parse_mercenary_gems),
-    Section(parse_mercenary_gems),
-    Section(parse_mercenary_gems),
-    Section(parse_mercenary_gems),
-    Section(parse_mercenary_gems),
-    Section(parse_modifiers), // enchant
-    Section(parse_modifiers), // scourge
-    Section(parse_modifiers), // implicit
-    Section(parse_modifiers), // explicit
-    Virtual(augment_modifiers),
-    Virtual(transform_to_legacy_modifiers),
-    Virtual(parse_fractured),
-    Virtual(pick_correct_variant),
-    Virtual(calc_disenchant_dust),
+    Repeat(3, parse_logbook_area),
+    Repeat(6, parse_mercenary_gems),
+    // enchant, scourge, implicit, explicit
+    Repeat(4, parse_modifiers),
+    PlainVirtual(augment_modifiers),
+    PlainVirtual(transform_to_legacy_modifiers),
+    PlainVirtual(parse_fractured),
+    Named(pick_correct_variant),
+    PlainVirtual(calc_disenchant_dust),
     Virtual(calc_base_percentile),
 ];
 
 const VALUE_AUGMENTED: &str = " (augmented)";
 
 /// `parseClipboard`
-pub fn parse_clipboard(data: &GameData, clipboard: &str) -> Result<ParsedItem, ParseError> {
-    let run = std::panic::AssertUnwindSafe(|| parse_clipboard_inner(data, clipboard));
-    match std::panic::catch_unwind(run) {
-        Ok(Ok(item)) => Ok(item),
-        Ok(Err(e)) if e.is::<UnknownItem>() => Err(ParseError::Unknown),
-        Ok(Err(_)) | Err(_) => Err(ParseError::Parse),
-    }
+pub fn parse_clipboard(data: &GameData, clipboard: &str) -> Result<ParsedItem> {
+    parse_clipboard_inner(data, clipboard)
 }
 
 fn parse_clipboard_inner(d: &GameData, clipboard: &str) -> Result<ParsedItem> {
-    let mut sections = item_text_to_sections(clipboard);
+    let mut texts = item_text_to_sections(clipboard);
 
-    if sections.first().and_then(|s| s.get(2)).map(String::as_str) == Some(d.cs.CANNOT_USE_ITEM.as_str()) {
-        sections[0].pop(); // remove CANNOT_USE_ITEM line
-        let first = sections[0].clone();
-        // prepend item class & rarity into second section
-        sections
-            .get_mut(1)
-            .ok_or_else(|| anyhow!("no second section"))?
+    if texts.first().and_then(|s| s.get(2)) == Some(&d.cs.CANNOT_USE_ITEM.as_str()) {
+        if let Some(first) = texts.first_mut() {
+            first.pop();
+        }
+        let first = texts.remove(0);
+        // prepend item class & rarity into the second section
+        texts
+            .first_mut()
+            .ok_or_else(|| ParseError::parse("no second section"))?
             .splice(0..0, first);
-        sections.remove(0); // remove first section where CANNOT_USE_ITEM line was
     }
-    let nameplate = sections.first_mut().ok_or_else(|| anyhow!("empty item"))?;
-    let mut item = parse_name_plate(d, nameplate)?;
-
-    sections.remove(0);
+    if texts.is_empty() {
+        return Err(ParseError::parse("empty item"));
+    }
+    let nameplate = texts.remove(0);
+    let (mut item, mut scratch) = parse_name_plate(d, &nameplate)?;
     item.raw_text = clipboard.to_string();
+
+    let mut sections: Vec<ItemSection> = texts
+        .into_iter()
+        .map(|lines| ItemSection { lines, claimed: false })
+        .collect();
 
     // each section can be parsed at most by one parser
     for parser in PARSERS {
         match parser {
             Virtual(f) => f(d, &mut item)?,
-            Section(f) => {
-                let mut i = 0;
-                while i < sections.len() {
-                    // Workaround: eldritch influence lines are appended to whichever section comes last,
-                    // so strip them before any parser looks at the section.
-                    parse_eldritch_item(d, &mut sections[i]);
-
-                    match f(d, &sections[i], &mut item)? {
-                        Parsed => {
-                            sections.remove(i);
-                            break;
-                        }
-                        ParserSkipped => break,
-                        Skipped => i += 1,
-                    }
+            Named(f) => f(d, &mut item, &mut scratch)?,
+            PlainVirtual(f) => f(d, &mut item),
+            PlainNamed(f) => f(d, &mut item, &mut scratch),
+            Plain(f) => offer_sections(d, &mut sections, &mut item, |d, s, i| Ok(f(d, s, i)))?,
+            Section(f) => offer_sections(d, &mut sections, &mut item, f)?,
+            Repeat(times, f) => {
+                for _ in 0..*times {
+                    offer_sections(d, &mut sections, &mut item, f)?;
                 }
             }
         }
@@ -183,34 +211,57 @@ fn parse_clipboard_inner(d: &GameData, clipboard: &str) -> Result<ParsedItem> {
     Ok(item)
 }
 
-fn item_text_to_sections(text: &str) -> Vec<Vec<String>> {
+/// Offers the unclaimed sections to `parse` in order until it claims one or opts out.
+fn offer_sections(
+    d: &GameData,
+    sections: &mut [ItemSection],
+    item: &mut ParsedItem,
+    parse: impl Fn(&GameData, &[&str], &mut ParsedItem) -> Result<SectionResult>,
+) -> Result<()> {
+    for section in sections.iter_mut().filter(|s| !s.claimed) {
+        // Workaround: eldritch influence lines are appended to whichever section comes last,
+        // so strip them before any parser looks at the section.
+        parse_eldritch_item(d, &mut section.lines);
+
+        match parse(d, &section.lines, item)? {
+            Parsed => {
+                section.claimed = true;
+                break;
+            }
+            ParserSkipped => break,
+            Skipped => {}
+        }
+    }
+    Ok(())
+}
+
+fn item_text_to_sections(text: &str) -> Vec<Vec<&str>> {
     let mut lines: Vec<&str> = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
     if lines.last() == Some(&"") {
         lines.pop();
     }
 
-    let mut sections: Vec<Vec<String>> = vec![vec![]];
+    let mut sections: Vec<Vec<&str>> = vec![vec![]];
     for line in lines {
-        if line == "--------" {
-            sections.push(vec![]);
-        } else {
-            sections.last_mut().unwrap().push(line.to_string());
+        match sections.last_mut() {
+            Some(last) if line != "--------" => last.push(line),
+            _ => sections.push(vec![]),
         }
     }
     sections.into_iter().filter(|s| !s.is_empty()).collect()
 }
 
 /// `section[0].…`, which throws when the section is empty.
-fn s0(section: &[String]) -> Result<&str> {
+fn s0<'a>(section: &[&'a str]) -> Result<&'a str> {
     section
         .first()
-        .map(String::as_str)
-        .ok_or_else(|| anyhow!("empty section"))
+        .copied()
+        .ok_or_else(|| ParseError::parse("empty section"))
 }
 
 /// `section[0] === x`
-fn first_is(section: &[String], x: &str) -> bool {
-    section.first().map(String::as_str) == Some(x)
+fn first_is(section: &[&str], x: &str) -> bool {
+    section.first() == Some(&x)
 }
 
 /// The rest of `line` after `prefix`, if it starts with it.
@@ -218,114 +269,112 @@ fn after<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     line.strip_prefix(prefix)
 }
 
-fn find_info(infos: &Option<Vec<BaseType>>) -> Option<&BaseType> {
-    infos.as_ref().and_then(|v| v.first())
+fn find_info<'a>(infos: Option<&Vec<&'a BaseType>>) -> Option<&'a BaseType> {
+    infos.and_then(|v| v.first().copied())
 }
 
-fn markup_condition_re() -> &'static (Regex, Regex) {
-    static RE: OnceLock<(Regex, Regex)> = OnceLock::new();
-    RE.get_or_init(|| {
-        (
-            Regex::new(r"<<set:.+?>>").unwrap(),
-            Regex::new(r"<(if:.+?|elif:.+?|else)>\{(.+?)\}").unwrap(),
-        )
-    })
-}
+#[expect(clippy::unwrap_used, reason = "constant pattern")]
+static MARKUP_SET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<<set:.+?>>").unwrap());
+
+#[expect(clippy::unwrap_used, reason = "constant pattern")]
+static MARKUP_COND: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<(if:.+?|elif:.+?|else)>\{(.+?)\}").unwrap());
 
 fn markup_condition_parser(text: &str) -> String {
     // ignores state set by <<set:__>>
     // always evaluates first condition to true <if:__>{...}
-    let (set, cond) = markup_condition_re();
-    let text = set.replace_all(text, "");
-    cond.replace_all(&text, |c: &regex::Captures| {
-        if c[1].starts_with("if:") {
-            c[2].to_string()
-        } else {
-            String::new()
-        }
-    })
-    .into_owned()
+    let text = MARKUP_SET.replace_all(text, "");
+    MARKUP_COND
+        .replace_all(&text, |c: &regex::Captures| {
+            if c[1].starts_with("if:") {
+                c[2].to_string()
+            } else {
+                String::new()
+            }
+        })
+        .into_owned()
 }
 
-fn parse_name_plate(d: &GameData, section: &mut Vec<String>) -> Result<ParsedItem> {
+fn parse_name_plate(d: &GameData, section: &[&str]) -> Result<(ParsedItem, Scratch)> {
     let cs = &d.cs;
-    let mut lines = std::mem::take(section).into_iter();
+    let mut lines = section.iter().copied();
 
     let line = lines.next();
-    if !line.is_some_and(|l| l.starts_with(&cs.ITEM_CLASS)) {
-        bail!("item.parse_error");
+    if !line.is_some_and(|l| l.starts_with(cs.ITEM_CLASS.as_str())) {
+        return Err(ParseError::parse("not an item"));
     }
 
     let mut line = lines.next();
-    let mut rarity_text: Option<String> = None;
-    if let Some(rest) = line.as_deref().and_then(|l| after(l, &cs.RARITY)) {
-        rarity_text = Some(rest.to_string());
+    let mut rarity_text: Option<&str> = None;
+    if let Some(rest) = line.and_then(|l| after(l, &cs.RARITY)) {
+        rarity_text = Some(rest);
         line = lines.next();
     }
 
     let name = match line {
-        Some(l) => markup_condition_parser(&l),
-        None => bail!("item.parse_error"),
+        Some(l) => markup_condition_parser(l),
+        None => return Err(ParseError::parse("not an item")),
     };
 
-    let base_type = lines.next().map(|l| markup_condition_parser(&l));
+    let base_type = lines.next().map(markup_condition_parser);
 
-    let mut item = ParsedItem {
+    let mut item = ParsedItem::default();
+    let scratch = Scratch {
         name,
         base_type,
-        ..Default::default()
+        info_variants: Vec::new(),
     };
 
     if let Some(rarity) = rarity_text {
-        let r = rarity.as_str();
-        if r == cs.RARITY_CURRENCY {
-            item.category = Some(ItemCategory::Currency.into());
-        } else if r == cs.RARITY_DIVCARD {
-            item.category = Some(ItemCategory::DivinationCard.into());
-        } else if r == cs.RARITY_GEM {
-            item.category = Some(ItemCategory::Gem.into());
-        } else if r == cs.RARITY_NORMAL || r == cs.RARITY_QUEST {
-            item.rarity = Some(ItemRarity::Normal);
-        } else if r == cs.RARITY_MAGIC {
-            item.rarity = Some(ItemRarity::Magic);
-        } else if r == cs.RARITY_RARE {
-            item.rarity = Some(ItemRarity::Rare);
-        } else if r == cs.RARITY_UNIQUE {
-            item.rarity = Some(ItemRarity::Unique);
+        let r = rarity;
+        let rarities = [
+            (&cs.RARITY_NORMAL, ItemRarity::Normal),
+            (&cs.RARITY_QUEST, ItemRarity::Normal),
+            (&cs.RARITY_MAGIC, ItemRarity::Magic),
+            (&cs.RARITY_RARE, ItemRarity::Rare),
+            (&cs.RARITY_UNIQUE, ItemRarity::Unique),
+        ];
+        let categories = [
+            (&cs.RARITY_CURRENCY, ItemCategory::Currency),
+            (&cs.RARITY_DIVCARD, ItemCategory::DivinationCard),
+            (&cs.RARITY_GEM, ItemCategory::Gem),
+        ];
+        if let Some((_, c)) = categories.iter().find(|(s, _)| s.as_str() == r) {
+            item.category = Some((*c).into());
+        } else if let Some((_, ra)) = rarities.iter().find(|(s, _)| s.as_str() == r) {
+            item.rarity = Some(*ra);
         }
     }
-    Ok(item)
+    Ok((item, scratch))
 }
 
-fn normalize_name(d: &GameData, item: &mut ParsedItem) -> Result<()> {
+fn normalize_name(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) {
     let cs = &d.cs;
     if item.rarity == Some(ItemRarity::Magic) {
-        if let Some(base_type) = magic_name::magic_basetype(&d.items, &item.name) {
-            item.name = base_type;
+        if let Some(base_type) = magic_name::magic_basetype(&d.items, &scratch.name) {
+            scratch.name = base_type;
         }
     }
 
     if is(&item.category, ItemCategory::MetamorphSample) {
-        let name = item.name.clone();
+        let name = scratch.name.clone();
         if cs.METAMORPH_BRAIN.is_match(&name) {
-            item.name = "Metamorph Brain".into();
+            scratch.name = "Metamorph Brain".into();
         } else if cs.METAMORPH_EYE.is_match(&name) {
-            item.name = "Metamorph Eye".into();
+            scratch.name = "Metamorph Eye".into();
         } else if cs.METAMORPH_LUNG.is_match(&name) {
-            item.name = "Metamorph Lung".into();
+            scratch.name = "Metamorph Lung".into();
         } else if cs.METAMORPH_HEART.is_match(&name) {
-            item.name = "Metamorph Heart".into();
+            scratch.name = "Metamorph Heart".into();
         } else if cs.METAMORPH_LIVER.is_match(&name) {
-            item.name = "Metamorph Liver".into();
+            scratch.name = "Metamorph Liver".into();
         }
     }
-    Ok(())
 }
 
-fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
-    let base_or_name = item.base_type.clone().unwrap_or_else(|| item.name.clone());
-    let mut info: Option<Vec<BaseType>> = if is(&item.category, ItemCategory::DivinationCard) {
-        d.items.by_translated("DIVINATION_CARD", &item.name)
+fn find_in_database(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) -> Result<()> {
+    let base_or_name = scratch.base_type.clone().unwrap_or_else(|| scratch.name.clone());
+    let mut info: Option<Vec<&BaseType>> = if is(&item.category, ItemCategory::DivinationCard) {
+        d.items.by_translated("DIVINATION_CARD", &scratch.name)
     } else if is(&item.category, ItemCategory::CapturedBeast) {
         d.items.by_translated("CAPTURED_BEAST", &base_or_name)
     } else if is(&item.category, ItemCategory::Gem) || is(&item.category, ItemCategory::MetamorphSample) {
@@ -335,12 +384,12 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
             } else {
                 "ITEM"
             },
-            &item.name,
+            &scratch.name,
         )
     } else if is(&item.category, ItemCategory::Voidstone) {
         d.items.by_ref("ITEM", "Charged Compass")
-    } else if item.rarity == Some(ItemRarity::Unique) && !item.is_unidentified {
-        d.items.by_translated("UNIQUE", &item.name)
+    } else if item.rarity == Some(ItemRarity::Unique) && !item.status.is_unidentified {
+        d.items.by_translated("UNIQUE", &scratch.name)
     } else {
         d.items.by_translated("ITEM", &base_or_name)
     };
@@ -361,84 +410,84 @@ fn find_in_database(d: &GameData, item: &mut ParsedItem) -> Result<()> {
 
     let infos = match info.as_mut() {
         Some(v) if !v.is_empty() => v,
-        _ => return Err(UnknownItem.into()),
+        _ => return Err(ParseError::Unknown),
     };
-    if infos[0].unique.is_some() {
-        // a missing base type or name becomes the text "undefined" in the lookup string; kept so the same items fail the same way
-        let base_name = item.base_type.as_deref().unwrap_or("undefined");
+    if infos.first().is_some_and(|i| i.unique.is_some()) {
+        let Some(base_name) = scratch.base_type.as_deref() else {
+            return Err(ParseError::Unknown);
+        };
         let base_types = d.items.by_translated("ITEM", base_name);
-        let Some(base_ref) = find_info(&base_types).map(|b| b.ref_name.clone()) else {
-            return Err(UnknownItem.into());
+        let Some(base_ref) = find_info(base_types.as_ref()).map(|b| b.ref_name.clone()) else {
+            return Err(ParseError::Unknown);
         };
         infos.retain(|i| i.unique.as_ref().is_some_and(|u| u.base == base_ref));
     }
     // only a check for "no result" before the unique filter above; with no
     // variants left it crashes on the missing `info`, which is a parse error
     if infos.is_empty() {
-        bail!("no variants of the unique left");
+        return Err(ParseError::parse("no variants of the unique left"));
     }
-    item.info_variants = info.unwrap();
+    scratch.info_variants = infos.drain(..).cloned().collect();
     // choose 1st variant, correct one will be picked at the end of parsing
-    item.info = item.info_variants.first().cloned().unwrap_or_default();
+    item.info = scratch.info_variants.first().cloned().unwrap_or_default();
     // same for every variant
     if item.category.is_none() {
         if let Some(c) = &item.info.craftable {
             item.category = Some(c.category.clone());
             // Viscera have no "Rarity:" line, and without a rarity no modifier is read
-            if item.rarity.is_none() && matches!(&c.category, Category::Other(o) if o == "Viscera") {
+            if item.rarity.is_none() && c.category == Category::Known(ItemCategory::Viscera) {
                 item.rarity = Some(ItemRarity::Normal);
             }
         } else if let Some(u) = &item.info.unique {
             let base = d
                 .items
                 .by_ref("ITEM", &u.base)
-                .ok_or_else(|| anyhow!("unique base missing"))?;
+                .ok_or_else(|| ParseError::parse("unique base missing"))?;
             let craftable = base
                 .first()
                 .and_then(|b| b.craftable.as_ref())
-                .ok_or_else(|| anyhow!("base has no category"))?;
+                .ok_or_else(|| ParseError::parse("base has no category"))?;
             item.category = Some(craftable.category.clone());
         }
     }
     Ok(())
 }
 
-fn parse_map_tier(d: &GameData, item: &mut ParsedItem) -> Result<()> {
-    let text = match item.base_type.as_deref() {
+fn parse_map_tier(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) {
+    let text = match scratch.base_type.as_deref() {
         Some(b) if !b.is_empty() => b.to_string(),
-        _ => item.name.clone(),
+        _ => scratch.name.clone(),
     };
     let Some(m) = d.cs.MAP_TIER.captures(&text) else {
-        return Ok(());
+        return;
     };
 
-    item.map_tier = Some(js::number(&m[1]));
+    item.map.tier = js::int(&m[1]);
     let matched = m[0].to_string();
 
-    match item.base_type.as_deref() {
-        Some(b) if !b.is_empty() => item.base_type = Some(b.replacen(&matched, "", 1)),
-        _ => item.name = item.name.replacen(&matched, "", 1),
+    match scratch.base_type.as_deref() {
+        Some(b) if !b.is_empty() => scratch.base_type = Some(b.replacen(&matched, "", 1)),
+        _ => scratch.name = scratch.name.replacen(&matched, "", 1),
     }
-    Ok(())
 }
 
 fn parse_area_prop_nested(d: &GameData, line: &str, item: &mut ParsedItem) -> bool {
     let cs = &d.cs;
     if let Some(v) = after(line, &cs.MAP_ITEM_QUANTITY) {
-        item.area_item_quantity = Some(js::parse_int(v));
+        item.map.item_quantity = js::parse_int(v);
         true
     } else if let Some(v) = after(line, &cs.MAP_ITEM_RARITY) {
-        item.area_item_rarity = Some(js::parse_int(v));
+        item.map.item_rarity = js::parse_int(v);
         true
     } else if let Some(v) = after(line, &cs.MAP_MONSTER_PACK_SIZE) {
-        item.area_pack_size = Some(js::parse_int(v));
+        item.map.pack_size = js::parse_int(v);
         true
     } else {
         false
     }
 }
 
-fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_map(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     let cs = &d.cs;
     if !is(&item.category, ItemCategory::Map) {
         return Ok(ParserSkipped);
@@ -450,13 +499,13 @@ fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<
         if parse_area_prop_nested(d, line, item) {
             result = Parsed;
         } else if let Some(v) = after(line, &cs.MAP_MORE_MAPS) {
-            item.map_more_maps = Some(js::parse_int(v));
+            item.map.more_maps = js::parse_int(v);
             result = Parsed;
         } else if let Some(v) = after(line, &cs.MAP_MORE_CURRENCY) {
-            item.map_more_currency = Some(js::parse_int(v));
+            item.map.more_currency = js::parse_int(v);
             result = Parsed;
         } else if let Some(v) = after(line, &cs.MAP_MORE_DIVINATION_CARDS) {
-            item.map_more_div_cards = Some(js::parse_int(v));
+            item.map.more_div_cards = js::parse_int(v);
             result = Parsed;
         } else if line.starts_with(&cs.MAP_AREA) {
             // the area name is read from the section's first line, not the matching line
@@ -464,15 +513,15 @@ fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<
             let area = d
                 .items
                 .by_translated("AREA", area_name)
-                .ok_or_else(|| anyhow!("Unknown Area name."))?;
-            item.map_area = area.into_iter().next();
+                .ok_or_else(|| ParseError::parse("Unknown Area name."))?;
+            item.map.area = area.into_iter().next().cloned();
             result = Parsed;
         } else if let Some(m) = cs.MAP_COMPLETION_REWARD.captures(line) {
             let reward = d
                 .items
                 .by_translated("UNIQUE", &m[1])
-                .ok_or_else(|| anyhow!("Unknown Unique Item."))?;
-            item.map_completion_reward = reward.into_iter().next();
+                .ok_or_else(|| ParseError::parse("Unknown Unique Item."))?;
+            item.map.completion_reward = reward.into_iter().next().cloned();
             result = Parsed;
         }
     }
@@ -480,62 +529,59 @@ fn parse_map(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<
     Ok(result)
 }
 
-fn parse_fractured(_: &GameData, item: &mut ParsedItem) -> Result<()> {
+fn parse_fractured(_: &GameData, item: &mut ParsedItem) {
     if item.new_mods.iter().any(|m| m.info.type_ == ModifierType::Fractured) {
-        item.is_fractured = Some(true);
+        item.mod_marks.is_fractured = true;
     }
-    Ok(())
 }
 
-fn pick_correct_variant(d: &GameData, item: &mut ParsedItem) -> Result<()> {
-    let variants = item.info_variants.clone();
-    item.info = _pick_correct_variant(&variants, item)?
-        .or_else(|| variants.first())
-        .cloned()
-        .unwrap_or_default();
+fn pick_correct_variant(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) -> Result<()> {
+    let at = pick_variant_index(&scratch.info_variants, item)?.unwrap_or(0);
+    item.info = scratch.info_variants.get(at).cloned().unwrap_or_default();
     if let Some(unique) = &item.info.unique {
         let base_variants = d
             .items
             .by_ref("ITEM", &unique.base)
-            .ok_or_else(|| anyhow!("unique base missing"))?;
-        item.unique_base = _pick_correct_variant(&base_variants, item)?
-            .or_else(|| base_variants.first())
-            .cloned();
+            .ok_or_else(|| ParseError::parse("unique base missing"))?;
+        let at = pick_variant_index(&base_variants, item)?.unwrap_or(0);
+        item.unique_base = base_variants.get(at).copied().cloned();
     }
     Ok(())
 }
 
-fn _pick_correct_variant<'a>(variants: &'a [BaseType], item: &ParsedItem) -> Result<Option<&'a BaseType>> {
+/// Index of the variant whose conditions the item meets.
+fn pick_variant_index<B: Borrow<BaseType>>(variants: &[B], item: &ParsedItem) -> Result<Option<usize>> {
     if variants.len() <= 1 {
-        return Ok(variants.first());
+        return Ok((!variants.is_empty()).then_some(0));
     }
 
-    let truthy = |v: Option<f64>| v.is_some_and(|v| v != 0.0 && !v.is_nan());
+    let truthy = |v: Option<i64>| v.is_some_and(|v| v != 0);
 
-    'variant: for variant in variants {
+    'variant: for (at, variant) in variants.iter().enumerate() {
         let cond = variant
+            .borrow()
             .disc
             .as_ref()
-            .ok_or_else(|| anyhow!("variant without conditions"))?;
+            .ok_or_else(|| ParseError::parse("variant without conditions"))?;
 
-        if cond.prop_ar.is_some() && !truthy(item.armour_ar) {
+        if cond.prop_ar.is_some() && !truthy(item.armour.ar) {
             continue;
         }
-        if cond.prop_ev.is_some() && !truthy(item.armour_ev) {
+        if cond.prop_ev.is_some() && !truthy(item.armour.ev) {
             continue;
         }
-        if cond.prop_es.is_some() && !truthy(item.armour_es) {
+        if cond.prop_es.is_some() && !truthy(item.armour.es) {
             continue;
         }
 
         if let Some(tier) = &cond.map_tier {
-            let Some(map_tier) = item.map_tier.filter(|t| *t != 0.0 && !t.is_nan()) else {
+            let Some(map_tier) = item.map.tier.filter(|t| *t != 0) else {
                 continue;
             };
             match tier.as_str() {
-                "W" if map_tier > 5.0 => continue,
-                "Y" if !(6.0..=10.0).contains(&map_tier) => continue,
-                "R" if map_tier < 11.0 => continue,
+                "W" if map_tier > 5 => continue,
+                "Y" if !(6..=10).contains(&map_tier) => continue,
+                "R" if map_tier < 11 => continue,
                 _ => {}
             }
         }
@@ -565,7 +611,7 @@ fn _pick_correct_variant<'a>(variants: &'a [BaseType], item: &ParsedItem) -> Res
             }
         }
 
-        return Ok(Some(variant));
+        return Ok(Some(at));
     }
 
     // it may happen that we don't find correct variant
@@ -573,67 +619,65 @@ fn _pick_correct_variant<'a>(variants: &'a [BaseType], item: &ParsedItem) -> Res
     Ok(None)
 }
 
-fn parse_influence(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_influence(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     if section.len() <= 2 {
         let count_before = item.influences.len();
 
         for line in section {
-            let l = line.as_str();
-            if l == cs.INFLUENCE_CRUSADER {
-                item.influences.push(ItemInfluence::Crusader);
-            } else if l == cs.INFLUENCE_ELDER {
-                item.influences.push(ItemInfluence::Elder);
-            } else if l == cs.INFLUENCE_SHAPER {
-                item.influences.push(ItemInfluence::Shaper);
-            } else if l == cs.INFLUENCE_HUNTER {
-                item.influences.push(ItemInfluence::Hunter);
-            } else if l == cs.INFLUENCE_REDEEMER {
-                item.influences.push(ItemInfluence::Redeemer);
-            } else if l == cs.INFLUENCE_WARLORD {
-                item.influences.push(ItemInfluence::Warlord);
+            let l = *line;
+            let influences = [
+                (&cs.INFLUENCE_CRUSADER, ItemInfluence::Crusader),
+                (&cs.INFLUENCE_ELDER, ItemInfluence::Elder),
+                (&cs.INFLUENCE_SHAPER, ItemInfluence::Shaper),
+                (&cs.INFLUENCE_HUNTER, ItemInfluence::Hunter),
+                (&cs.INFLUENCE_REDEEMER, ItemInfluence::Redeemer),
+                (&cs.INFLUENCE_WARLORD, ItemInfluence::Warlord),
+            ];
+            if let Some((_, i)) = influences.iter().find(|(s, _)| l == s.as_str()) {
+                item.influences.push(*i);
             }
         }
 
         if count_before < item.influences.len() {
-            return Ok(Parsed);
+            return Parsed;
         }
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_corrupted(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_corrupted(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if first_is(section, &d.cs.CORRUPTED) {
-        item.is_corrupted = true;
-        return Ok(Parsed);
+        item.status.is_corrupted = true;
+        return Parsed;
     } else if first_is(section, &d.cs.UNMODIFIABLE) {
-        item.is_corrupted = true;
-        item.is_unmodifiable = Some(true);
-        return Ok(Parsed);
+        item.status.is_corrupted = true;
+        item.status.is_unmodifiable = true;
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_foil(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_foil(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if item.rarity != Some(ItemRarity::Unique) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
     if first_is(section, &d.cs.FOIL_UNIQUE) {
-        item.is_foil = Some(true);
-        return Ok(Parsed);
+        item.looks.is_foil = true;
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_unidentified(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_unidentified(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if first_is(section, &d.cs.UNIDENTIFIED) {
-        item.is_unidentified = true;
-        return Ok(Parsed);
+        item.status.is_unidentified = true;
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_item_level(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_item_level(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let prefix = if item.info.ref_name == "Filled Coffin" {
         &d.cs.CORPSE_LEVEL
     } else {
@@ -642,76 +686,76 @@ fn parse_item_level(d: &GameData, section: &[String], item: &mut ParsedItem) -> 
 
     for line in section {
         if let Some(v) = after(line, prefix) {
-            item.item_level = Some(js::number(v));
-            return Ok(Parsed);
+            item.item_level = js::int(v);
+            return Parsed;
         }
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_talisman_tier(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_talisman_tier(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if let Some(v) = after(s0(section)?, &d.cs.TALISMAN_TIER) {
-        item.talisman_tier = Some(js::number(v));
+        item.talisman_tier = js::int(v);
         return Ok(Parsed);
     }
     Ok(Skipped)
 }
 
-fn parse_vaal_gem(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_vaal_gem(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Gem) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
-    if section.len() == 1 {
-        if let Some(gem_info) = d.items.by_translated("GEM", &section[0]) {
-            item.vaal_gem = gem_info.into_iter().next();
-            return Ok(Parsed);
+    if let [only] = section {
+        if let Some(gem_info) = d.items.by_translated("GEM", only) {
+            item.gem.vaal = gem_info.into_iter().next().cloned();
+            return Parsed;
         }
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_gem(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_gem(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Gem) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
     if let Some(v) = section.get(1).and_then(|l| after(l, &d.cs.GEM_LEVEL)) {
         // "Level: 20 (Max)"
-        item.gem_level = Some(js::parse_int(v));
+        item.gem.level = js::parse_int(v);
 
         parse_quality_nested(d, section, item);
 
-        return Ok(Parsed);
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_imbued_gem(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_imbued_gem(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Gem) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
-    if section.len() == 1 {
-        let Some((stat, matcher)) = d.stats.by_match_str(&section[0]) else {
-            return Ok(Skipped);
+    if let [only] = section {
+        let Some((stat, matcher)) = d.stats.by_match_str(only) else {
+            return Skipped;
         };
 
         item.new_mods.push(ParsedModifier {
             info: ModifierInfo::new(ModifierType::Imbued),
             stats: vec![ParsedStat {
-                stat,
-                translation: matcher,
+                stat: Arc::new(stat.clone()),
+                translation: Arc::new(matcher.clone()),
                 roll: None,
             }],
         });
-        item.imbued_gem = Some(true);
+        item.gem.imbued = true;
 
-        return Ok(Parsed);
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_stack_size(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_stack_size(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.rarity != Some(ItemRarity::Normal)
         && !is(&item.category, ItemCategory::Currency)
         && !is(&item.category, ItemCategory::DivinationCard)
@@ -721,10 +765,10 @@ fn parse_stack_size(d: &GameData, section: &[String], item: &mut ParsedItem) -> 
     if let Some(v) = after(s0(section)?, &d.cs.STACK_SIZE) {
         // Portal Scroll "Stack Size: 2[localized separator]448/40"
         let digits: String = v.chars().filter(|c| c.is_ascii_digit() || *c == '/').collect();
-        let mut parts = digits.split('/').map(js::number);
+        let mut parts = digits.split('/').map(js::int);
         item.stack_size = Some(StackSize {
-            value: parts.next().unwrap_or(f64::NAN),
-            max: parts.next(),
+            value: parts.next().flatten(),
+            max: parts.next().flatten(),
         });
 
         return Ok(Parsed);
@@ -732,12 +776,12 @@ fn parse_stack_size(d: &GameData, section: &[String], item: &mut ParsedItem) -> 
     Ok(Skipped)
 }
 
-fn parse_sockets(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_sockets(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if let Some(v) = after(s0(section)?, &d.cs.SOCKETS) {
         let sockets = v.trim_end();
 
         let mut result = Sockets {
-            white: sockets.matches('W').count() as f64,
+            white: i64::try_from(sockets.matches('W').count()).unwrap_or(i64::MAX),
             linked: None,
         };
 
@@ -746,9 +790,9 @@ fn parse_sockets(d: &GameData, section: &[String], item: &mut ParsedItem) -> Res
             .map(|c| if c == ' ' || c == '-' { c } else { '#' })
             .collect();
         if pattern == "#-#-#-#-#-#" {
-            result.linked = Some(6.0);
+            result.linked = Some(6);
         } else if pattern == "# #-#-#-#-#" || pattern == "#-#-#-#-# #" || pattern == "#-#-#-#-#" {
-            result.linked = Some(5.0);
+            result.linked = Some(5);
         }
         item.sockets = Some(result);
         return Ok(Parsed);
@@ -756,42 +800,42 @@ fn parse_sockets(d: &GameData, section: &[String], item: &mut ParsedItem) -> Res
     Ok(Skipped)
 }
 
-fn parse_quality_nested(d: &GameData, section: &[String], item: &mut ParsedItem) -> bool {
+fn parse_quality_nested(d: &GameData, section: &[&str], item: &mut ParsedItem) -> bool {
     for line in section {
         if let Some(v) = after(line, &d.cs.QUALITY) {
             // "Quality: +20% (augmented)"
-            item.quality = Some(js::parse_int(v));
+            item.quality = js::parse_int(v);
             return true;
         }
     }
     false
 }
 
-fn parse_memory_strands_nested(d: &GameData, section: &[String], item: &mut ParsedItem) -> bool {
+fn parse_memory_strands_nested(d: &GameData, section: &[&str], item: &mut ParsedItem) -> bool {
     for line in section {
         if let Some(v) = after(line, &d.cs.MEMORY_STRANDS) {
-            item.memory_strands = Some(js::parse_int(v));
+            item.memory_strands = js::parse_int(v);
             return true;
         }
     }
     false
 }
 
-fn parse_armour(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_armour(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     let mut result = Skipped;
 
     for line in section {
         if let Some(v) = after(line, &cs.ARMOUR) {
-            item.armour_ar = Some(js::parse_int(v));
+            item.armour.ar = js::parse_int(v);
         } else if let Some(v) = after(line, &cs.EVASION) {
-            item.armour_ev = Some(js::parse_int(v));
+            item.armour.ev = js::parse_int(v);
         } else if let Some(v) = after(line, &cs.ENERGY_SHIELD) {
-            item.armour_es = Some(js::parse_int(v));
+            item.armour.es = js::parse_int(v);
         } else if let Some(v) = after(line, &cs.TAG_WARD) {
-            item.armour_ward = Some(js::parse_int(v));
+            item.armour.ward = js::parse_int(v);
         } else if let Some(v) = after(line, &cs.BLOCK_CHANCE) {
-            item.armour_block = Some(js::parse_int(v));
+            item.armour.block = js::parse_int(v);
         } else {
             continue;
         }
@@ -803,28 +847,31 @@ fn parse_armour(d: &GameData, section: &[String], item: &mut ParsedItem) -> Resu
         parse_memory_strands_nested(d, section, item);
     }
 
-    Ok(result)
+    result
 }
 
 /// `str.split('-').map(parseInt)` averaged.
 fn range_avg(text: &str) -> f64 {
-    let values: Vec<f64> = text.split('-').map(js::parse_int).collect();
+    let values: Vec<f64> = text
+        .split('-')
+        .map(|s| js::parse_int(s).map_or(f64::NAN, |n| n as f64))
+        .collect();
     roll_or_minmax_avg(&values)
 }
 
-fn parse_weapon(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_weapon(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     let mut result = Skipped;
 
     for line in section {
         if let Some(v) = after(line, &cs.CRIT_CHANCE) {
-            item.weapon_crit = Some(js::parse_float(v));
+            item.weapon.crit = Some(js::parse_float(v));
         } else if let Some(v) = after(line, &cs.ATTACK_SPEED) {
-            item.weapon_as = Some(js::parse_float(v));
+            item.weapon.attack_speed = Some(js::parse_float(v));
         } else if let Some(v) = after(line, &cs.PHYSICAL_DAMAGE) {
-            item.weapon_physical = Some(range_avg(v));
+            item.weapon.physical = Some(range_avg(v));
         } else if let Some(v) = after(line, &cs.ELEMENTAL_DAMAGE) {
-            item.weapon_elemental = Some(v.split(", ").map(range_avg).fold(0.0, |sum, x| sum + x));
+            item.weapon.elemental = Some(v.split(", ").map(range_avg).fold(0.0, |sum, x| sum + x));
         } else {
             continue;
         }
@@ -836,10 +883,10 @@ fn parse_weapon(d: &GameData, section: &[String], item: &mut ParsedItem) -> Resu
         parse_memory_strands_nested(d, section, item);
     }
 
-    Ok(result)
+    result
 }
 
-fn parse_accessory(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_accessory(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     let jewellery = known(&item.category).is_some_and(is_jewellery);
     if !jewellery && !is(&item.category, ItemCategory::Quiver) {
         return Ok(ParserSkipped);
@@ -855,7 +902,7 @@ fn parse_accessory(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
             };
             if let Some(found) = try_parse_translation(d, &stat, ModifierType::Pseudo, None)? {
                 if found.stat.jewellery_quality.is_some() {
-                    item.quality = Some(found.roll.as_ref().ok_or_else(|| anyhow!("no roll"))?.value);
+                    item.quality = Some(found.roll.as_ref().ok_or_else(|| ParseError::parse("no roll"))?.value as i64);
                     item.new_mods.push(ParsedModifier {
                         info: ModifierInfo::new(ModifierType::Pseudo),
                         stats: vec![found],
@@ -873,18 +920,18 @@ fn parse_accessory(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
     Ok(result)
 }
 
-fn pseudo_mod(stat: crate::data::Stat, matcher: crate::data::StatMatcher, type_: ModifierType) -> ParsedModifier {
+fn pseudo_mod(stat: &crate::data::Stat, matcher: &crate::data::StatMatcher, type_: ModifierType) -> ParsedModifier {
     ParsedModifier {
         info: ModifierInfo::new(type_),
         stats: vec![ParsedStat {
-            stat,
-            translation: matcher,
+            stat: Arc::new(stat.clone()),
+            translation: Arc::new(matcher.clone()),
             roll: None,
         }],
     }
 }
 
-fn parse_logbook_area(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_logbook_area(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.info.ref_name != "Expedition Logbook" {
         return Ok(ParserSkipped);
     }
@@ -893,7 +940,7 @@ fn parse_logbook_area(d: &GameData, section: &[String], item: &mut ParsedItem) -
     }
 
     // skip Logbook Area line, parse Faction
-    let Some((faction, faction_matcher)) = d.stats.by_match_str(&section[1]) else {
+    let Some((faction, faction_matcher)) = section.get(1).and_then(|l| d.stats.by_match_str(l)) else {
         return Ok(Skipped);
     };
     if !faction.ref_.starts_with("Has Logbook Faction:") {
@@ -902,7 +949,7 @@ fn parse_logbook_area(d: &GameData, section: &[String], item: &mut ParsedItem) -
 
     let mut area_mods = vec![pseudo_mod(faction, faction_matcher, ModifierType::Pseudo)];
 
-    let (mod_type, lines) = parse_mod_type(&section[2..])?;
+    let (mod_type, lines) = parse_mod_type(section.get(2..).unwrap_or_default())?;
     for line in &lines {
         // Area contains an Expedition Boss (#)
         if let Some((stat, matcher)) = d.stats.by_match_str(line) {
@@ -912,12 +959,15 @@ fn parse_logbook_area(d: &GameData, section: &[String], item: &mut ParsedItem) -
         }
     }
 
-    item.logbook_area_mods.get_or_insert_with(Vec::new).push(area_mods);
+    item.heist
+        .logbook_area_mods
+        .get_or_insert_with(Vec::new)
+        .push(area_mods);
 
     Ok(Parsed)
 }
 
-fn parse_mercenary(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_mercenary(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     let cs = &d.cs;
     if item.info.ref_name != "Mercenary Warrant" {
         return Ok(ParserSkipped);
@@ -925,12 +975,12 @@ fn parse_mercenary(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
 
     for line in section {
         if let Some(v) = after(line, &cs.MERCENARY_LEVEL) {
-            item.item_level = Some(js::number(v));
+            item.item_level = js::int(v);
         } else if let Some(v) = after(line, &cs.MERCENARY_BUILD) {
             let mut build = d
                 .items
                 .by_translated("MERCENARY_BUILD", v)
-                .ok_or_else(|| anyhow!("Unknown Mercenary Build."))?;
+                .ok_or_else(|| ParseError::parse("Unknown Mercenary Build."))?;
             if let Some(ref_name) = build
                 .first()
                 .and_then(|b| b.mercenary_build.as_ref())
@@ -939,19 +989,19 @@ fn parse_mercenary(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
                 build = d
                     .items
                     .by_ref("MERCENARY_BUILD", ref_name)
-                    .ok_or_else(|| anyhow!("missing build"))?;
+                    .ok_or_else(|| ParseError::parse("missing build"))?;
             }
-            item.mercenary_build = build.into_iter().next();
+            item.gem.mercenary_build = build.into_iter().next().cloned();
         }
     }
 
-    if item.mercenary_build.is_some() {
+    if item.gem.mercenary_build.is_some() {
         return Ok(Parsed);
     }
     Ok(Skipped)
 }
 
-fn parse_mercenary_gems(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_mercenary_gems(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.info.ref_name != "Mercenary Warrant" {
         return Ok(ParserSkipped);
     }
@@ -973,11 +1023,11 @@ fn parse_mercenary_gems(d: &GameData, section: &[String], item: &mut ParsedItem)
 
     let mut group = vec![skill];
 
-    for line in &section[1..] {
+    for line in section.iter().skip(1) {
         let support = try_parse_translation(
             d,
             &StatString {
-                string: line.clone(),
+                string: (*line).to_string(),
                 unscalable: true,
             },
             ModifierType::Pseudo,
@@ -990,7 +1040,7 @@ fn parse_mercenary_gems(d: &GameData, section: &[String], item: &mut ParsedItem)
                     .stat
                     .mercenary
                     .as_ref()
-                    .ok_or_else(|| anyhow!("mercenary stat without mercenary info"))?;
+                    .ok_or_else(|| ParseError::parse("mercenary stat without mercenary info"))?;
                 m.synthetic_family == Some(true) && m.tier != Some(3.0)
             }
         };
@@ -1005,12 +1055,12 @@ fn parse_mercenary_gems(d: &GameData, section: &[String], item: &mut ParsedItem)
         }
     }
 
-    item.mercenary_skills.get_or_insert_with(Vec::new).push(group);
+    item.gem.mercenary_skills.get_or_insert_with(Vec::new).push(group);
 
     Ok(Parsed)
 }
 
-fn parse_modifiers(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_modifiers(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.rarity.is_none() {
         return Ok(ParserSkipped);
     }
@@ -1031,7 +1081,7 @@ fn parse_modifiers(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
                 .is_some_and(|l| *l == d.cs.VEILED_PREFIX || *l == d.cs.VEILED_SUFFIX);
             if veiled {
                 mod_info.type_ = ModifierType::Veiled;
-                item.is_veiled = Some(true);
+                item.mod_marks.is_veiled = true;
             }
             parse_stats_from_mod(
                 d,
@@ -1059,84 +1109,84 @@ fn parse_modifiers(d: &GameData, section: &[String], item: &mut ParsedItem) -> R
     Ok(Parsed)
 }
 
-fn parse_mirrored(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_mirrored(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if first_is(section, &d.cs.MIRRORED) {
-        item.is_mirrored = Some(true);
-        return Ok(Parsed);
+        item.origin.is_mirrored = true;
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_split(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
-    if section.len() == 1 && section[0] == d.cs.SPLIT {
-        item.is_split = Some(true);
-        return Ok(Parsed);
+fn parse_split(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
+    if matches!(section, [only] if *only == d.cs.SPLIT) {
+        item.origin.is_split = true;
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_flask(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_flask(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Flask) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
     // the purpose of this parser is to "consume" flask buffs
     // so they are not recognized as modifiers
     if section.iter().any(|l| d.cs.FLASK_CHARGES.is_match(l)) {
         parse_quality_nested(d, section, item);
-        return Ok(Parsed);
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_tincture(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_tincture(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Tincture) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
     if parse_quality_nested(d, section, item) {
-        return Ok(Parsed);
+        return Parsed;
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_sentinel_charge(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_sentinel_charge(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if !is(&item.category, ItemCategory::Sentinel) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
-    if section.len() == 1 {
-        if let Some(v) = after(&section[0], &d.cs.SENTINEL_CHARGE) {
-            item.sentinel_charge = Some(js::parse_int(v));
-            return Ok(Parsed);
+    if let [only] = section {
+        if let Some(v) = after(only, &d.cs.SENTINEL_CHARGE) {
+            item.sentinel_charge = js::parse_int(v);
+            return Parsed;
         }
     }
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_scrying_orb(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_scrying_orb(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.info.ref_name != "Scrying Orb" {
         return Ok(ParserSkipped);
     }
 
-    if section.len() == 1 {
-        if let Some(area_name) = after(&section[0], &d.cs.MAP_AREA) {
+    if let [only] = section {
+        if let Some(area_name) = after(only, &d.cs.MAP_AREA) {
             let area = d
                 .items
                 .by_translated("AREA", area_name)
-                .ok_or_else(|| anyhow!("Unknown Area name."))?;
-            item.map_area = area.into_iter().next();
+                .ok_or_else(|| ParseError::parse("Unknown Area name."))?;
+            item.map.area = area.into_iter().next().cloned();
             return Ok(Parsed);
         }
     }
     Ok(Skipped)
 }
 
-fn parse_eldritch_item(d: &GameData, section: &mut Vec<String>) {
+fn parse_eldritch_item(d: &GameData, section: &mut Vec<&str>) {
     // these don't have a dedicated section and are appended to last-ish one,
     // it can be Explicit Mods section, Corrupted, or Mirrored line.
     while let Some(last) = section.last() {
-        if *last == d.cs.ITEM_EATER || *last == d.cs.ITEM_EXARCH {
+        if *last == d.cs.ITEM_EATER.as_str() || *last == d.cs.ITEM_EXARCH.as_str() {
             section.pop();
         } else {
             break;
@@ -1144,90 +1194,95 @@ fn parse_eldritch_item(d: &GameData, section: &mut Vec<String>) {
     }
 }
 
-fn parse_synthesised(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
-    if section.len() == 1 && section[0] == d.cs.SECTION_SYNTHESISED {
-        item.is_synthesised = Some(true);
-        let strip = |text: &str| -> Result<String> {
-            let m =
-                d.cs.ITEM_SYNTHESISED
-                    .captures(text)
-                    .ok_or_else(|| anyhow!("not a synthesised name"))?;
-            Ok(m[1].to_string())
-        };
-        match item.base_type.as_deref() {
-            Some(b) if !b.is_empty() => item.base_type = Some(strip(b)?),
-            _ => item.name = strip(&item.name)?,
-        }
-        return Ok(Parsed);
+fn parse_synthesised(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
+    if matches!(section, [only] if *only == d.cs.SECTION_SYNTHESISED) {
+        item.origin.is_synthesised = true;
+        return Parsed;
     }
 
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_superior(d: &GameData, item: &mut ParsedItem) -> Result<()> {
+/// The name of a synthesised item carries a prefix that the data does not have.
+fn strip_synthesised_name(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) -> Result<()> {
+    if !item.origin.is_synthesised {
+        return Ok(());
+    }
+    let strip = |text: &str| -> Result<String> {
+        let m =
+            d.cs.ITEM_SYNTHESISED
+                .captures(text)
+                .ok_or_else(|| ParseError::parse("not a synthesised name"))?;
+        Ok(m[1].to_string())
+    };
+    match scratch.base_type.as_deref() {
+        Some(b) if !b.is_empty() => scratch.base_type = Some(strip(b)?),
+        _ => scratch.name = strip(&scratch.name)?,
+    }
+    Ok(())
+}
+
+fn parse_superior(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) {
     let applies = match item.rarity {
         Some(ItemRarity::Normal) => true,
-        Some(ItemRarity::Magic | ItemRarity::Rare | ItemRarity::Unique) => item.is_unidentified,
+        Some(ItemRarity::Magic | ItemRarity::Rare | ItemRarity::Unique) => item.status.is_unidentified,
         None => false,
     };
     if applies {
-        if let Some(m) = d.cs.ITEM_SUPERIOR.captures(&item.name) {
-            item.name = m[1].to_string();
+        if let Some(m) = d.cs.ITEM_SUPERIOR.captures(&scratch.name) {
+            scratch.name = m[1].to_string();
         }
     }
-    Ok(())
 }
 
-fn parse_foulborn(d: &GameData, item: &mut ParsedItem) -> Result<()> {
-    if item.rarity != Some(ItemRarity::Unique) || item.is_unidentified {
-        return Ok(());
+fn parse_foulborn(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) {
+    if item.rarity != Some(ItemRarity::Unique) || item.status.is_unidentified {
+        return;
     }
 
-    if let Some(m) = d.cs.FOULBORN_NAME.captures(&item.name) {
-        item.name = m[1].to_string();
-        item.is_foulborn = Some(true);
+    if let Some(m) = d.cs.FOULBORN_NAME.captures(&scratch.name) {
+        scratch.name = m[1].to_string();
+        item.mod_marks.is_foulborn = true;
     }
-    Ok(())
 }
 
-fn parse_vestigial(d: &GameData, item: &mut ParsedItem) -> Result<()> {
-    let Some(base_type) = item.base_type.as_deref().filter(|b| !b.is_empty()) else {
-        return Ok(());
+fn parse_vestigial(d: &GameData, item: &mut ParsedItem, scratch: &mut Scratch) {
+    let Some(base_type) = scratch.base_type.as_deref().filter(|b| !b.is_empty()) else {
+        return;
     };
     if item.rarity != Some(ItemRarity::Unique) {
-        return Ok(());
+        return;
     }
 
     if let Some(m) = d.cs.VESTIGIAL_NAME.captures(base_type) {
-        item.base_type = Some(m[1].to_string());
-        item.is_vestigial = Some(true);
+        scratch.base_type = Some(m[1].to_string());
+        item.looks.is_vestigial = true;
     }
-    Ok(())
 }
 
-fn parse_category_by_help_text(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_category_by_help_text(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     if first_is(section, &d.cs.BEAST_HELP) {
         item.category = Some(ItemCategory::CapturedBeast.into());
-        return Ok(Parsed);
+        return Parsed;
     } else if first_is(section, &d.cs.METAMORPH_HELP) {
         item.category = Some(ItemCategory::MetamorphSample.into());
-        return Ok(Parsed);
+        return Parsed;
     } else if first_is(section, &d.cs.VOIDSTONE_HELP) {
         item.category = Some(ItemCategory::Voidstone.into());
-        return Ok(Parsed);
+        return Parsed;
     }
 
-    Ok(Skipped)
+    Skipped
 }
 
-fn parse_heist_contract(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_heist_contract(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     if !is(&item.category, ItemCategory::HeistContract) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
     if !parse_area_level_nested(d, section, item) {
-        return Ok(Skipped);
+        return Skipped;
     }
 
     let mut contract = HeistContract::default();
@@ -1249,7 +1304,7 @@ fn parse_heist_contract(d: &GameData, section: &[String], item: &mut ParsedItem)
             if let Some((_, name)) = jobs.iter().find(|(translated, _)| translated.as_str() == job) {
                 contract.required_job = Some(name);
             }
-            contract.job_level = Some(js::number(&m["level"]));
+            contract.job_level = js::int(&m["level"]);
             continue;
         }
 
@@ -1257,22 +1312,21 @@ fn parse_heist_contract(d: &GameData, section: &[String], item: &mut ParsedItem)
             if m[1] == cs.HEIST_TARGET_PRICELESS {
                 contract.target_value = Some("Priceless");
             }
-            continue;
         }
     }
 
-    item.heist_contract = Some(contract);
-    Ok(Parsed)
+    item.heist.contract = Some(contract);
+    Parsed
 }
 
-fn parse_heist_blueprint(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_heist_blueprint(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     if !is(&item.category, ItemCategory::HeistBlueprint) {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
     if !parse_area_level_nested(d, section, item) {
-        return Ok(Skipped);
+        return Skipped;
     }
 
     let mut blueprint = HeistBlueprint::default();
@@ -1290,16 +1344,16 @@ fn parse_heist_blueprint(d: &GameData, section: &[String], item: &mut ParsedItem
             }
         } else if let Some(wings) = after(line, &cs.HEIST_WINGS_REVEALED) {
             let mut parts = wings.split('/');
-            blueprint.wings_revealed = Some(js::parse_int(parts.next().unwrap_or("")));
-            blueprint.wings_total = Some(js::parse_int(parts.next().unwrap_or("undefined")));
+            blueprint.wings_revealed = parts.next().and_then(js::parse_int);
+            blueprint.wings_total = parts.next().and_then(js::parse_int);
         }
     }
 
-    item.heist_blueprint = Some(blueprint);
-    Ok(Parsed)
+    item.heist.blueprint = Some(blueprint);
+    Parsed
 }
 
-fn parse_chart(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_chart(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if !is(&item.category, ItemCategory::Chart) {
         return Ok(ParserSkipped);
     }
@@ -1311,54 +1365,54 @@ fn parse_chart(d: &GameData, section: &[String], item: &mut ParsedItem) -> Resul
     let area = d
         .items
         .by_translated("AREA", s0(section)?)
-        .ok_or_else(|| anyhow!("Unknown Area name."))?;
-    item.map_area = area.into_iter().next();
+        .ok_or_else(|| ParseError::parse("Unknown Area name."))?;
+    item.map.area = area.into_iter().next().cloned();
 
     for line in section {
         if parse_area_prop_nested(d, line, item) {
             // line parsed
         } else if let Some(v) = after(line, &d.cs.CHART_SULPHUR) {
-            item.chart_sulphur = Some(js::parse_int(v));
+            item.map.chart_sulphur = js::parse_int(v);
         }
     }
 
     Ok(Parsed)
 }
 
-fn parse_area_level_nested(d: &GameData, section: &[String], item: &mut ParsedItem) -> bool {
+fn parse_area_level_nested(d: &GameData, section: &[&str], item: &mut ParsedItem) -> bool {
     for line in section {
         if let Some(v) = after(line, &d.cs.AREA_LEVEL) {
-            item.area_level = Some(js::number(v));
+            item.map.area_level = js::int(v);
             return true;
         }
     }
     false
 }
 
-fn parse_area_level(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_area_level(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let r = item.info.ref_name.as_str();
     if r != "Chronicle of Atzoatl" && r != "Expedition Logbook" && r != "Forbidden Tome" {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
 
     if !parse_area_level_nested(d, section, item) {
-        return Ok(Skipped);
+        return Skipped;
     }
 
-    Ok(Parsed)
+    Parsed
 }
 
-fn parse_atzoatl_rooms(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_atzoatl_rooms(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
     let cs = &d.cs;
     if item.info.ref_name != "Chronicle of Atzoatl" {
-        return Ok(ParserSkipped);
+        return ParserSkipped;
     }
     if !first_is(section, &cs.INCURSION_OPEN) {
-        return Ok(Skipped);
+        return Skipped;
     }
 
     let mut state = INCURSION_OPEN;
-    for line in &section[1..] {
+    for line in section.iter().skip(1) {
         if *line == cs.INCURSION_OBSTRUCTED {
             state = INCURSION_OBSTRUCTED;
             continue;
@@ -1373,33 +1427,33 @@ fn parse_atzoatl_rooms(d: &GameData, section: &[String], item: &mut ParsedItem) 
             item.new_mods.push(ParsedModifier {
                 info: ModifierInfo::new(ModifierType::Pseudo),
                 stats: vec![ParsedStat {
-                    stat,
-                    translation: crate::data::StatMatcher {
+                    stat: Arc::new(stat.clone()),
+                    translation: Arc::new(crate::data::StatMatcher {
                         string,
                         ..Default::default()
-                    },
+                    }),
                     roll: Some(Roll {
                         unscalable: true,
                         generation: None,
                         dp: false,
-                        value: state,
-                        min: state,
-                        max: state,
+                        value: state as f64,
+                        min: state as f64,
+                        max: state as f64,
                     }),
                 }],
             });
         } else {
             item.unknown_modifiers.push(UnknownModifier {
-                text: line.clone(),
+                text: line.to_string(),
                 type_: ModifierType::Pseudo,
             });
         }
     }
 
-    Ok(Parsed)
+    Parsed
 }
 
-fn parse_filled_coffin(d: &GameData, section: &[String], item: &mut ParsedItem) -> Result<SectionResult> {
+fn parse_filled_coffin(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Result<SectionResult> {
     if item.info.ref_name != "Filled Coffin" {
         return Ok(ParserSkipped);
     }
@@ -1429,15 +1483,14 @@ fn parse_stats_from_mod(
 ) -> Result<()> {
     if modifier.info.type_ == ModifierType::Veiled {
         let name = modifier.info.name.clone();
-        // a missing name is looked up as the text "undefined"
-        match d.stats.by_match_str(name.as_deref().unwrap_or("undefined")) {
+        match name.as_deref().and_then(|n| d.stats.by_match_str(n)) {
             Some((stat, matcher)) => modifier.stats.push(ParsedStat {
-                stat,
-                translation: matcher,
+                stat: Arc::new(stat.clone()),
+                translation: Arc::new(matcher.clone()),
                 roll: None,
             }),
             None => item.unknown_modifiers.push(UnknownModifier {
-                text: name.unwrap_or_else(|| "undefined".into()),
+                text: name.unwrap_or_default(),
                 type_: modifier.info.type_,
             }),
         }
@@ -1469,12 +1522,12 @@ fn parse_stats_from_mod(
     Ok(())
 }
 
-fn augment_modifiers(_: &GameData, item: &mut ParsedItem) -> Result<()> {
+fn augment_modifiers(_: &GameData, item: &mut ParsedItem) {
     let rarity = item.rarity;
-    let corrupted = item.is_corrupted;
-    let mirrored = item.is_mirrored == Some(true);
+    let corrupted = item.status.is_corrupted;
+    let mirrored = item.origin.is_mirrored;
     let ring_or_amulet = is(&item.category, ItemCategory::Ring) || is(&item.category, ItemCategory::Amulet);
-    let synthesised = item.is_synthesised == Some(true);
+    let synthesised = item.origin.is_synthesised;
 
     for m in &mut item.new_mods {
         if synthesised && m.info.type_ == ModifierType::Implicit && m.info.mechanic.is_none() {
@@ -1494,17 +1547,11 @@ fn augment_modifiers(_: &GameData, item: &mut ParsedItem) -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 /// Deprecated, but the filters and price lookups still read `stats_by_type`.
-fn transform_to_legacy_modifiers(_: &GameData, item: &mut ParsedItem) -> Result<()> {
+fn transform_to_legacy_modifiers(_: &GameData, item: &mut ParsedItem) {
     item.stats_by_type = sum_stats_by_mod_type(&item.new_mods);
-    Ok(())
-}
-
-fn truthy(v: Option<f64>) -> bool {
-    v.is_some_and(|v| v != 0.0 && !v.is_nan())
 }
 
 fn calc_base_percentile(_: &GameData, item: &mut ParsedItem) -> Result<()> {
@@ -1519,15 +1566,15 @@ fn calc_base_percentile(_: &GameData, item: &mut ParsedItem) -> Result<()> {
     // Using `AR/EV -> ES -> WARD` order to improve accuracy
     // of calculation (larger rolls = more precise).
     let candidates = [
-        (item.armour_ar, info.ar, &calc_q20::ARMOUR),
-        (item.armour_ev, info.ev, &calc_q20::EVASION),
-        (item.armour_es, info.es, &calc_q20::ENERGY_SHIELD),
-        (item.armour_ward, info.ward, &calc_q20::WARD),
+        (item.armour.ar, info.ar, &calc_q20::ARMOUR),
+        (item.armour.ev, info.ev, &calc_q20::EVASION),
+        (item.armour.es, info.es, &calc_q20::ENERGY_SHIELD),
+        (item.armour.ward, info.ward, &calc_q20::WARD),
     ];
     let hit = candidates
         .iter()
         .find_map(|&(total, bounds, stats)| match (total, bounds) {
-            (Some(total), Some(bounds)) if truthy(Some(total)) => Some((total, bounds, stats)),
+            (Some(total), Some(bounds)) if total != 0 => Some((total as f64, bounds, stats)),
             _ => None,
         });
     if let Some((total, bounds, stats)) = hit {
@@ -1536,7 +1583,7 @@ fn calc_base_percentile(_: &GameData, item: &mut ParsedItem) -> Result<()> {
     Ok(())
 }
 
-fn calc_disenchant_dust(_: &GameData, item: &mut ParsedItem) -> Result<()> {
+fn calc_disenchant_dust(_: &GameData, item: &mut ParsedItem) {
     let Some(disenchant_value) = item
         .info
         .unique
@@ -1544,21 +1591,21 @@ fn calc_disenchant_dust(_: &GameData, item: &mut ParsedItem) -> Result<()> {
         .and_then(|u| u.disenchant_value)
         .filter(|v| *v != 0.0 && !v.is_nan())
     else {
-        return Ok(());
+        return;
     };
 
     let mut increase_by_factors = 0.0;
 
     // +50% per Influence Type
-    increase_by_factors += item.influences.len() as f64 * 50.0;
+    increase_by_factors = (item.influences.len() as f64).mul_add(50.0, increase_by_factors);
 
     // +2% per 1% Item Quality
-    if truthy(item.quality) {
-        increase_by_factors += item.quality.unwrap() * 2.0;
+    if let Some(quality) = item.quality {
+        increase_by_factors = (quality as f64).mul_add(2.0, increase_by_factors);
     }
 
     // +50% per Corruption Implicit
-    if item.is_corrupted {
+    if item.status.is_corrupted {
         for m in &item.new_mods {
             if m.info.mechanic == Some(ModifierMechanic::Corruption) {
                 increase_by_factors += 50.0;
@@ -1567,15 +1614,15 @@ fn calc_disenchant_dust(_: &GameData, item: &mut ParsedItem) -> Result<()> {
     }
 
     let factors_multi = (increase_by_factors + 100.0) / 100.0;
-    // an item without an item level makes these NaN
-    let ilvl = item.item_level.unwrap_or(f64::NAN);
-    let clamp = |lo: f64, hi: f64| js::min(js::max(ilvl, lo), hi);
+    let Some(ilvl) = item.item_level else {
+        return;
+    };
+    let clamp = |lo: i64, hi: i64| ilvl.clamp(lo, hi) as f64;
     let term1 = 50.0; // ilvl 46 and below
-    let term2 = 2.0 * (clamp(46.0, 68.0) - 46.0); // ilvl 47 to 68
-    let term3 = (3.0 * (clamp(46.0, 68.0) - 46.0) / 11.0).floor(); // ilvl 47 to 68
-    let term4 = 25.0 * (clamp(68.0, 84.0) - 68.0); // ilvl 69 to 84
+    let term2 = 2.0 * (clamp(46, 68) - 46.0); // ilvl 47 to 68
+    let term3 = (3.0 * (clamp(46, 68) - 46.0) / 11.0).floor(); // ilvl 47 to 68
+    let term4 = 25.0 * (clamp(68, 84) - 68.0); // ilvl 69 to 84
     let total_multi = 5.0 * (term1 + term2 + term3 + term4) * factors_multi;
 
-    item.dust_equivalent = Some((disenchant_value * total_multi).floor());
-    Ok(())
+    item.dust_equivalent = Some((disenchant_value * total_multi).floor() as i64);
 }

@@ -12,7 +12,7 @@ Hyprland bind ──> gold ctl price-check ──> gold daemon ──> Quickshel
 - `crates/gold-core/`: the logic (parser, filters, pseudo stats, trade client, rate limiter, poe.ninja). No UI.
 - `crates/gold/`: the daemon and the `gold` command. Talks to Hyprland, the clipboard and the overlay.
 - `quickshell/GoldOverlay.qml`: the overlay. It draws what the daemon sends and sends clicks back.
-- `assets/en/`: the English game data the daemon reads (`client_strings.js`, `items.ndjson`, `stats.ndjson`).
+- `assets/en/`: the English game data the daemon reads (`client_strings.json`, `items.ndjson`, `stats.ndjson`).
 
 The overlay is a layer-shell surface that exists only while a check is open, takes keyboard focus
 on demand, and only its panel takes clicks. Keys reach the game through Hyprland's `send_key_state`

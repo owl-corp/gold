@@ -6,6 +6,7 @@ use std::time::Duration;
 pub use reqwest::Client;
 
 /// `contact` goes into the User-Agent, because GGG asks API clients to identify themselves.
+///
 /// `poesessid` (optional) logs the client in on pathofexile.com; the cookie is tied to
 /// that domain, so it is never sent to poe.ninja.
 pub fn client(contact: &str, poesessid: Option<&str>) -> Result<Client> {

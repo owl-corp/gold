@@ -15,7 +15,7 @@ pub struct App {
     pub data: Arc<GameData>,
     pub client: gold_core::http::Client,
     pub trade: TradeClient,
-    pub session: std::sync::Mutex<Option<Session>>,
+    pub session: parking_lot::Mutex<Option<Session>>,
     config: Config,
     league: Mutex<Option<String>>,
     ninja: Mutex<Option<Arc<NinjaDb>>>,
@@ -26,16 +26,16 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Result<Self> {
         let dir = config.data_dir();
-        let data = GameData::load_with_extra(&dir, crate::config::extra_data_dir().as_deref(), "en")
+        let data = GameData::load_with_extra(&dir, crate::config::extra_data_dir().as_deref())
             .with_context(|| format!("loading game data from {}", dir.display()))?;
         let contact = config.contact.clone().unwrap_or_else(|| "unset".into());
         let client = gold_core::http::client(&contact, config.poesessid.as_deref())?;
         let trade = TradeClient::new(client.clone(), std::time::Duration::from_secs(2));
-        Ok(App {
+        Ok(Self {
             data: Arc::new(data),
             client,
             trade,
-            session: std::sync::Mutex::new(None),
+            session: parking_lot::Mutex::new(None),
             config,
             league: Mutex::new(None),
             ninja: Mutex::new(None),
@@ -57,14 +57,14 @@ impl App {
         if let Some(l) = cached.as_ref() {
             return Ok(l.clone());
         }
-        let league = match &self.config.league {
-            Some(l) => l.clone(),
-            None => {
-                let all = leagues::load(&self.client).await?;
-                leagues::default_league(&all).context("no trade leagues")?.to_string()
-            }
+        let league = if let Some(l) = &self.config.league {
+            l.clone()
+        } else {
+            let all = leagues::load(&self.client).await?;
+            leagues::default_league(&all).context("no trade leagues")?.to_string()
         };
         *cached = Some(league.clone());
+        drop(cached);
         Ok(league)
     }
 
@@ -96,6 +96,7 @@ impl App {
         }
         let db = Arc::new(NinjaDb::fetch(&self.client, &league).await?);
         *cached = Some(db.clone());
+        drop(cached);
         Ok(db)
     }
 }

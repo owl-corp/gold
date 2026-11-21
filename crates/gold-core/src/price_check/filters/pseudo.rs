@@ -1,8 +1,8 @@
 //! Pseudo stats (total resistances, total life, ...) and item property filters
 //! (armour, dps, ...).
 use super::stat_filters::{calculated_stat_to_filter, Ctx};
-use super::*;
-use crate::data::{GameData, Stat, StatGroup, StatMatcher, StatOrGroup, StatTrade};
+use super::{FilterTag, StatFilter};
+use crate::data::{GameData, Stat, StatMatcher, StatOrGroup, StatTrade};
 use crate::parser::calc_q20::{self, calc_prop_bounds, prop_at_20_quality, QualityStats};
 use crate::parser::item::{ItemRarity, ParsedItem};
 use crate::parser::meta::{is_armour, is_weapon, known, ItemCategory};
@@ -10,16 +10,20 @@ use crate::parser::modifiers::{ModifierType, StatCalculated, StatRoll, StatSourc
 use crate::parser::stat_translations::{ParsedStat, Roll};
 use anyhow::{anyhow, Result};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub const BASE_PCTL_AFFECTED_IDS: [&str; 4] = ["item.armour", "item.evasion_rating", "item.energy_shield", "item.ward"];
 
 /// `pseudoStatByRef`
+#[must_use]
 pub fn pseudo_stat(data: &GameData, ref_: &str) -> Option<Stat> {
     match data.stats.by_ref(ref_)? {
-        StatOrGroup::Group(StatGroup { stats, .. }) => stats
-            .into_iter()
-            .find(|s| s.ref_ == ref_ && s.trade.ids.contains_key("pseudo")),
-        StatOrGroup::Stat(s) => Some(s),
+        StatOrGroup::Group(g) => g
+            .stats
+            .iter()
+            .find(|s| s.ref_ == ref_ && s.trade.ids.contains_key("pseudo"))
+            .cloned(),
+        StatOrGroup::Stat(s) => Some((**s).clone()),
     }
 }
 
@@ -136,7 +140,7 @@ struct RuleStat {
     keep: bool,
 }
 
-fn rs(ref_: &'static str) -> RuleStat {
+const fn rs(ref_: &'static str) -> RuleStat {
     RuleStat {
         ref_,
         multiplier: 1.0,
@@ -145,7 +149,7 @@ fn rs(ref_: &'static str) -> RuleStat {
     }
 }
 
-fn req(ref_: &'static str) -> RuleStat {
+const fn req(ref_: &'static str) -> RuleStat {
     RuleStat {
         required: true,
         ..rs(ref_)
@@ -161,7 +165,7 @@ struct Rule {
     chaos_res_mutation: bool,
 }
 
-fn rule(pseudo: &'static str, stats: Vec<RuleStat>) -> Rule {
+const fn rule(pseudo: &'static str, stats: Vec<RuleStat>) -> Rule {
     Rule {
         group: None,
         pseudo,
@@ -172,7 +176,7 @@ fn rule(pseudo: &'static str, stats: Vec<RuleStat>) -> Rule {
     }
 }
 
-fn rules() -> Vec<Rule> {
+fn resistance_attribute_rules() -> Vec<Rule> {
     let res_with = |element: &'static str| -> Vec<RuleStat> {
         RESISTANCES
             .iter()
@@ -194,7 +198,7 @@ fn rules() -> Vec<Rule> {
             .collect()
     };
 
-    let mut out = vec![
+    vec![
         Rule {
             disabled: Some(false),
             ..rule(
@@ -252,38 +256,35 @@ fn rules() -> Vec<Rule> {
             group: Some("to_x_attr"),
             ..rule("+# total to Intelligence", attr_with("int"))
         },
-    ];
+    ]
+}
 
-    let mut life = vec![req("+# to maximum Life")];
-    life.extend(
-        ATTRIBUTES
-            .iter()
-            .filter(|i| i.attributes.contains(&"str"))
-            .map(|i| RuleStat {
-                multiplier: 5.0 / 10.0,
-                keep: true,
-                ..rs(i.ref_)
-            }),
-    );
-    out.push(Rule {
-        disabled: Some(false),
-        ..rule("+# total maximum Life", life)
-    });
+fn life_mana_rules() -> [Rule; 2] {
+    let with_attributes = |base: &'static str, attr: &str| -> Vec<RuleStat> {
+        let mut stats = vec![req(base)];
+        stats.extend(
+            ATTRIBUTES
+                .iter()
+                .filter(|i| i.attributes.contains(&attr))
+                .map(|i| RuleStat {
+                    multiplier: 5.0 / 10.0,
+                    keep: true,
+                    ..rs(i.ref_)
+                }),
+        );
+        stats
+    };
+    [
+        Rule {
+            disabled: Some(false),
+            ..rule("+# total maximum Life", with_attributes("+# to maximum Life", "str"))
+        },
+        rule("+# total maximum Mana", with_attributes("+# to maximum Mana", "int")),
+    ]
+}
 
-    let mut mana = vec![req("+# to maximum Mana")];
-    mana.extend(
-        ATTRIBUTES
-            .iter()
-            .filter(|i| i.attributes.contains(&"int"))
-            .map(|i| RuleStat {
-                multiplier: 5.0 / 10.0,
-                keep: true,
-                ..rs(i.ref_)
-            }),
-    );
-    out.push(rule("+# total maximum Mana", mana));
-
-    out.extend([
+fn speed_crit_rules() -> Vec<Rule> {
+    vec![
         rule(
             "#% total increased maximum Energy Shield",
             vec![rs("#% increased maximum Energy Shield")],
@@ -320,6 +321,11 @@ fn rules() -> Vec<Rule> {
             "+#% Global Critical Strike Multiplier",
             vec![rs("+#% to Global Critical Strike Multiplier")],
         ),
+    ]
+}
+
+fn damage_rules() -> Vec<Rule> {
+    vec![
         Rule {
             group: Some("incr_ele_dmg"),
             ..rule(
@@ -401,6 +407,11 @@ fn rules() -> Vec<Rule> {
                 ],
             )
         },
+    ]
+}
+
+fn regen_rules() -> Vec<Rule> {
+    vec![
         rule(
             "# Life Regenerated per Second",
             vec![rs("Regenerate # Life per second")],
@@ -421,8 +432,89 @@ fn rules() -> Vec<Rule> {
             "#% increased Mana Regeneration Rate",
             vec![rs("#% increased Mana Regeneration Rate")],
         ),
-    ]);
+    ]
+}
+
+fn rules() -> Vec<Rule> {
+    let mut out = resistance_attribute_rules();
+    out.extend(life_mana_rules());
+    out.extend(speed_crit_rules());
+    out.extend(damage_rules());
+    out.extend(regen_rules());
     out
+}
+
+/// Drops the modifiers the pseudo stats replaced, then keeps one resistance and attribute
+/// filter per group when they say the same thing.
+fn resolve_groups(ctx: &mut Ctx, by_group: &BTreeMap<&str, Vec<String>>, applied: &[Rule]) {
+    let rarity = ctx.item.rarity;
+    ctx.stats_by_type.retain(|m| {
+        !applied.iter().any(|r| {
+            r.stats
+                .iter()
+                .any(|s| m.stat.ref_ == s.ref_ && (!s.keep || rarity != Some(ItemRarity::Unique)))
+        })
+    });
+
+    let value_of = |filters: &[StatFilter], ref_: &str| -> f64 {
+        filters
+            .iter()
+            .find(|f| f.stat_ref == ref_)
+            .and_then(|f| f.roll.as_ref())
+            .map_or(f64::NAN, |r| r.value)
+    };
+
+    if let Some(res_refs) = by_group.get("to_x_ele_res") {
+        let mut sorted: Vec<(String, f64)> = res_refs
+            .iter()
+            .map(|r| (r.clone(), value_of(&ctx.filters, r)))
+            .collect();
+        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let max = match sorted.as_slice() {
+            [a, b, ..] if crate::js::eq(a.1, b.1) => None,
+            _ => sorted.first().map(|s| s.0.clone()),
+        };
+
+        if let Some(max) = &max {
+            if let Some(f) = ctx.filters.iter_mut().find(|f| &f.stat_ref == max) {
+                f.hidden = Some("filters.hide_ele_res".into());
+            }
+        }
+        ctx.filters
+            .retain(|f| !res_refs.contains(&f.stat_ref) || Some(&f.stat_ref) == max.as_ref());
+    }
+
+    if let Some(attr_refs) = by_group.get("to_x_attr") {
+        let mut sorted: Vec<(String, f64)> = attr_refs
+            .iter()
+            .map(|r| (r.clone(), value_of(&ctx.filters, r)))
+            .collect();
+        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        if let [first, second, third] = sorted.as_slice() {
+            let to_all = by_group.get("to_all_attrs");
+            if sorted.iter().all(|s| crate::js::eq(s.1, first.1)) && to_all.is_some() {
+                ctx.filters.retain(|f| !attr_refs.contains(&f.stat_ref));
+            } else {
+                if let Some(to_all) = to_all {
+                    ctx.filters.retain(|f| !to_all.contains(&f.stat_ref));
+                }
+
+                if third.1 / first.1 < 0.3 {
+                    let hide = |filters: &mut Vec<StatFilter>, ref_: &str, why: &str| {
+                        if let Some(f) = filters.iter_mut().find(|f| f.stat_ref == ref_) {
+                            f.hidden = Some(why.to_string());
+                        }
+                    };
+                    if crate::js::eq(second.1, third.1) {
+                        hide(&mut ctx.filters, &second.0, "hide_attr_same_2nd_n_3rd");
+                        hide(&mut ctx.filters, &third.0, "hide_attr_same_2nd_n_3rd");
+                    } else {
+                        hide(&mut ctx.filters, &third.0, "hide_attr_smallest_total");
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
@@ -463,7 +555,7 @@ pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
         }
 
         if ctx.item.rarity == Some(ItemRarity::Unique) {
-            if ctx.item.is_corrupted {
+            if ctx.item.status.is_corrupted {
                 if sources.len() < 2 {
                     continue;
                 }
@@ -482,7 +574,7 @@ pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
         let mut filter = calculated_stat_to_filter(
             ctx.data,
             &StatCalculated {
-                stat: pseudo,
+                stat: pseudo.into(),
                 type_: ModifierType::Pseudo,
                 sources,
             },
@@ -493,7 +585,7 @@ pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
         filter.disabled = rule.disabled.unwrap_or(true);
 
         if rule.chaos_res_mutation {
-            if filter.sources.len() == 1 && filter.sources[0].modifier.info.type_ == ModifierType::Crafted {
+            if matches!(filter.sources.as_slice(), [only] if only.modifier.info.type_ == ModifierType::Crafted) {
                 filter.hidden = Some("filters.hide_crafted_chaos".into());
             } else {
                 filter.disabled = false;
@@ -512,76 +604,7 @@ pub fn filter_pseudo(ctx: &mut Ctx) -> Result<()> {
         applied.push(rule);
     }
 
-    let rarity = ctx.item.rarity;
-    ctx.stats_by_type.retain(|m| {
-        !applied.iter().any(|r| {
-            r.stats
-                .iter()
-                .any(|s| m.stat.ref_ == s.ref_ && (!s.keep || rarity != Some(ItemRarity::Unique)))
-        })
-    });
-
-    let value_of = |filters: &[StatFilter], ref_: &str| -> f64 {
-        filters
-            .iter()
-            .find(|f| f.stat_ref == ref_)
-            .and_then(|f| f.roll.as_ref())
-            .map(|r| r.value)
-            .unwrap_or(f64::NAN)
-    };
-
-    if let Some(res_refs) = by_group.get("to_x_ele_res") {
-        let mut sorted: Vec<(String, f64)> = res_refs
-            .iter()
-            .map(|r| (r.clone(), value_of(&ctx.filters, r)))
-            .collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let max = if sorted.len() > 1 && sorted[0].1 == sorted[1].1 {
-            None
-        } else {
-            sorted.first().map(|s| s.0.clone())
-        };
-
-        if let Some(max) = &max {
-            if let Some(f) = ctx.filters.iter_mut().find(|f| &f.stat_ref == max) {
-                f.hidden = Some("filters.hide_ele_res".into());
-            }
-        }
-        ctx.filters
-            .retain(|f| !res_refs.contains(&f.stat_ref) || Some(&f.stat_ref) == max.as_ref());
-    }
-
-    if let Some(attr_refs) = by_group.get("to_x_attr") {
-        let mut sorted: Vec<(String, f64)> = attr_refs
-            .iter()
-            .map(|r| (r.clone(), value_of(&ctx.filters, r)))
-            .collect();
-        sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        if sorted.len() == 3 {
-            let to_all = by_group.get("to_all_attrs");
-            if sorted.iter().all(|s| s.1 == sorted[0].1) && to_all.is_some() {
-                ctx.filters.retain(|f| !attr_refs.contains(&f.stat_ref));
-            } else {
-                if let Some(to_all) = to_all {
-                    ctx.filters.retain(|f| !to_all.contains(&f.stat_ref));
-                }
-
-                if sorted[2].1 / sorted[0].1 < 0.3 {
-                    let hide = |filters: &mut Vec<StatFilter>, ref_: &str, why: &str| {
-                        if let Some(f) = filters.iter_mut().find(|f| f.stat_ref == ref_) {
-                            f.hidden = Some(why.to_string());
-                        }
-                    };
-                    if sorted[1].1 == sorted[2].1 {
-                        hide(&mut ctx.filters, &sorted[1].0, "hide_attr_same_2nd_n_3rd");
-                        hide(&mut ctx.filters, &sorted[2].0, "hide_attr_same_2nd_n_3rd");
-                    } else {
-                        hide(&mut ctx.filters, &sorted[2].0, "hide_attr_smallest_total");
-                    }
-                }
-            }
-        }
-    }
+    resolve_groups(ctx, &by_group, &applied);
 
     Ok(())
 }
@@ -627,13 +650,13 @@ pub fn filter_memory_strands(ctx: &mut Ctx, hidden: Option<&str>) -> Result<()> 
                 ref_: "Memory Strands: #",
                 trade_id: "item.memory_strands",
                 roll: Some(StatRoll {
-                    value: n,
+                    value: n as f64,
                     min: 0.0,
                     max: 100.0,
                 }),
                 sources: vec![],
                 dp: false,
-                disabled: Some(n < 60.0 || hidden.is_some()),
+                disabled: Some(n < 60 || hidden.is_some()),
                 hidden: hidden.map(String::from),
             },
         )?;
@@ -672,7 +695,7 @@ fn weapon_stat_refs() -> Vec<&'static str> {
 }
 
 fn is_single_attr_armour(item: &ParsedItem) -> bool {
-    [item.armour_ar, item.armour_ev, item.armour_es, item.armour_ward]
+    [item.armour.ar, item.armour.ev, item.armour.es, item.armour.ward]
         .iter()
         .filter(|v| v.is_some())
         .count()
@@ -682,6 +705,18 @@ fn is_single_attr_armour(item: &ParsedItem) -> bool {
 fn truthy(v: Option<f64>) -> Option<f64> {
     v.filter(|v| *v != 0.0 && !v.is_nan())
 }
+
+fn nonzero(v: Option<i64>) -> Option<i64> {
+    v.filter(|v| *v != 0)
+}
+
+type Defence<'a> = (
+    Option<i64>,
+    &'a QualityStats,
+    Option<[f64; 2]>,
+    &'static str,
+    &'static str,
+);
 
 fn armour_props(ctx: &mut Ctx) -> Result<()> {
     let item = ctx.item;
@@ -694,27 +729,27 @@ fn armour_props(ctx: &mut Ctx) -> Result<()> {
         .unwrap_or_default();
     let single = is_single_attr_armour(item);
 
-    let defences: [(Option<f64>, &QualityStats, Option<[f64; 2]>, &'static str, &'static str); 4] = [
-        (item.armour_ar, &calc_q20::ARMOUR, base.ar, "Armour: #", "item.armour"),
+    let defences: [Defence; 4] = [
+        (item.armour.ar, &calc_q20::ARMOUR, base.ar, "Armour: #", "item.armour"),
         (
-            item.armour_ev,
+            item.armour.ev,
             &calc_q20::EVASION,
             base.ev,
             "Evasion Rating: #",
             "item.evasion_rating",
         ),
         (
-            item.armour_es,
+            item.armour.es,
             &calc_q20::ENERGY_SHIELD,
             base.es,
             "Energy Shield: #",
             "item.energy_shield",
         ),
-        (item.armour_ward, &calc_q20::WARD, base.ward, "Ward: #", "item.ward"),
+        (item.armour.ward, &calc_q20::WARD, base.ward, "Ward: #", "item.ward"),
     ];
     for (value, stats, bounds, ref_, trade_id) in defences {
-        if let Some(total) = truthy(value) {
-            let q20 = prop_at_20_quality(total, stats, bounds, item)?;
+        if let Some(total) = nonzero(value) {
+            let q20 = prop_at_20_quality(total as f64, stats, bounds, item)?;
             let f = prop_to_filter(
                 ctx,
                 PropFilter {
@@ -731,9 +766,9 @@ fn armour_props(ctx: &mut Ctx) -> Result<()> {
         }
     }
 
-    if let Some(block) = truthy(item.armour_block) {
+    if let Some(block) = nonzero(item.armour.block) {
         let b = calc_prop_bounds(
-            block,
+            block as f64,
             &QualityStats {
                 flat: &["+#% Chance to Block"],
                 incr: &[],
@@ -756,14 +791,14 @@ fn armour_props(ctx: &mut Ctx) -> Result<()> {
     }
 
     if [
-        item.armour_ar,
-        item.armour_ev,
-        item.armour_es,
-        item.armour_ward,
-        item.armour_block,
+        item.armour.ar,
+        item.armour.ev,
+        item.armour.es,
+        item.armour.ward,
+        item.armour.block,
     ]
     .iter()
-    .any(|v| truthy(*v).is_some())
+    .any(|v| nonzero(*v).is_some())
     {
         let used = armour_stat_refs();
         ctx.stats_by_type.retain(|m| !used.contains(&m.stat.ref_.as_str()));
@@ -772,58 +807,18 @@ fn armour_props(ctx: &mut Ctx) -> Result<()> {
 }
 
 fn is_pdps_important(item: &ParsedItem) -> bool {
-    use ItemCategory::*;
+    use ItemCategory::{Bow, OneHandedAxe, OneHandedSword, TwoHandedAxe, TwoHandedSword, Warstaff};
     matches!(
         known(&item.category),
         Some(OneHandedAxe | TwoHandedAxe | OneHandedSword | TwoHandedSword | Bow | Warstaff)
     )
 }
 
-fn weapon_props(ctx: &mut Ctx) -> Result<()> {
+/// Total, elemental and physical DPS filters.
+fn dps_filters(ctx: &mut Ctx, pdps: StatRoll, edps: StatRoll, dps: StatRoll) -> Result<()> {
     let item = ctx.item;
-
-    let attack_speed = calc_prop_bounds(
-        item.weapon_as.unwrap_or(0.0),
-        &QualityStats {
-            incr: &["#% increased Attack Speed"],
-            flat: &[],
-        },
-        item,
-    )?;
-    let phys_q20 = prop_at_20_quality(
-        item.weapon_physical.unwrap_or(0.0),
-        &calc_q20::PHYSICAL_DAMAGE,
-        None,
-        item,
-    )?;
-    let times = |a: StatRoll, b: StatRoll| StatRoll {
-        value: a.value * b.value,
-        min: a.min * b.min,
-        max: a.max * b.max,
-    };
-    let pdps = times(phys_q20.roll, attack_speed.roll);
-
-    let ele_dmg = calc_prop_bounds(
-        item.weapon_elemental.unwrap_or(0.0),
-        &QualityStats {
-            flat: &[
-                "Adds # to # Lightning Damage",
-                "Adds # to # Cold Damage",
-                "Adds # to # Fire Damage",
-            ],
-            incr: &[],
-        },
-        item,
-    )?;
-    let edps = times(ele_dmg.roll, attack_speed.roll);
-    let dps = StatRoll {
-        value: pdps.value + edps.value,
-        min: pdps.min + edps.min,
-        max: pdps.max + edps.max,
-    };
-
-    if truthy(item.weapon_elemental).is_some() {
-        if truthy(item.weapon_physical).is_some() {
+    if truthy(item.weapon.elemental).is_some() {
+        if truthy(item.weapon.physical).is_some() {
             let f = prop_to_filter(
                 ctx,
                 PropFilter {
@@ -855,7 +850,7 @@ fn weapon_props(ctx: &mut Ctx) -> Result<()> {
         ctx.filters.push(f);
     }
 
-    if truthy(item.weapon_physical).is_some() {
+    if truthy(item.weapon.physical).is_some() {
         let low_phys = pdps.value / dps.value < 0.67;
         let f = prop_to_filter(
             ctx,
@@ -871,6 +866,53 @@ fn weapon_props(ctx: &mut Ctx) -> Result<()> {
         )?;
         ctx.filters.push(f);
     }
+    Ok(())
+}
+
+fn weapon_props(ctx: &mut Ctx) -> Result<()> {
+    let item = ctx.item;
+
+    let attack_speed = calc_prop_bounds(
+        item.weapon.attack_speed.unwrap_or(0.0),
+        &QualityStats {
+            incr: &["#% increased Attack Speed"],
+            flat: &[],
+        },
+        item,
+    )?;
+    let phys_q20 = prop_at_20_quality(
+        item.weapon.physical.unwrap_or(0.0),
+        &calc_q20::PHYSICAL_DAMAGE,
+        None,
+        item,
+    )?;
+    let times = |a: StatRoll, b: StatRoll| StatRoll {
+        value: a.value * b.value,
+        min: a.min * b.min,
+        max: a.max * b.max,
+    };
+    let pdps = times(phys_q20.roll, attack_speed.roll);
+
+    let ele_dmg = calc_prop_bounds(
+        item.weapon.elemental.unwrap_or(0.0),
+        &QualityStats {
+            flat: &[
+                "Adds # to # Lightning Damage",
+                "Adds # to # Cold Damage",
+                "Adds # to # Fire Damage",
+            ],
+            incr: &[],
+        },
+        item,
+    )?;
+    let edps = times(ele_dmg.roll, attack_speed.roll);
+    let dps = StatRoll {
+        value: pdps.value + edps.value,
+        min: pdps.min + edps.min,
+        max: pdps.max + edps.max,
+    };
+
+    dps_filters(ctx, pdps, edps, dps)?;
 
     let f = prop_to_filter(
         ctx,
@@ -886,7 +928,7 @@ fn weapon_props(ctx: &mut Ctx) -> Result<()> {
     )?;
     ctx.filters.push(f);
 
-    if let Some(crit) = truthy(item.weapon_crit) {
+    if let Some(crit) = truthy(item.weapon.crit) {
         let c = calc_prop_bounds(
             crit,
             &QualityStats {
@@ -911,10 +953,10 @@ fn weapon_props(ctx: &mut Ctx) -> Result<()> {
     }
 
     if [
-        item.weapon_as,
-        item.weapon_crit,
-        item.weapon_elemental,
-        item.weapon_physical,
+        item.weapon.attack_speed,
+        item.weapon.crit,
+        item.weapon.elemental,
+        item.weapon.physical,
     ]
     .iter()
     .any(|v| truthy(*v).is_some())
@@ -945,9 +987,16 @@ pub fn no_source_pseudo_to_filter(
     disabled: Option<bool>,
     hidden: Option<String>,
 ) -> Result<StatFilter> {
+    let translation = Arc::new(
+        pseudo
+            .matchers
+            .first()
+            .ok_or_else(|| anyhow!("pseudo stat without matchers"))?
+            .clone(),
+    );
     let parsed = ParsedStat {
-        stat: pseudo.clone(),
-        translation: pseudo.matchers[0].clone(),
+        stat: Arc::new(pseudo),
+        translation,
         roll: roll.map(|r| Roll {
             unscalable: false,
             generation: None,
@@ -958,7 +1007,7 @@ pub fn no_source_pseudo_to_filter(
         }),
     };
     let calc = StatCalculated {
-        stat: pseudo,
+        stat: Arc::clone(&parsed.stat),
         type_: ModifierType::Pseudo,
         sources: vec![StatSource {
             modifier: crate::parser::advanced::ParsedModifier {

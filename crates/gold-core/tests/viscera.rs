@@ -1,5 +1,6 @@
 //! Viscera are newer than the shipped data and have no "Rarity:" line. Their modifiers
 //! are read anyway; this is not covered by the golden corpus.
+#![expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 use gold_core::data::GameData;
 use gold_core::parser::parse_clipboard;
 use gold_core::price_check::filters::presets::{create_presets, PresetOptions};
@@ -43,7 +44,7 @@ fn viscera_modifiers_are_parsed() {
 {"name":"Crustacean's Claw","refName":"Crustacean's Claw","namespace":"ITEM","icon":"","craftable":{"category":"Viscera"}}"#,
     )
     .unwrap();
-    let data = GameData::load_with_extra(&root.join("../../assets"), Some(&extra), "en").unwrap();
+    let data = GameData::load_with_extra(&root.join("../../assets"), Some(&extra)).unwrap();
     std::fs::remove_dir_all(&extra).unwrap();
 
     let item = parse_clipboard(&data, ITEM).unwrap();
@@ -61,7 +62,7 @@ fn viscera_modifiers_are_parsed() {
     };
     let presets = create_presets(&data, &item, &options).unwrap();
     let preset = &presets.presets[0];
-    let request = create_trade_request(&data, &preset.filters, &preset.stats).unwrap();
+    let request = serde_json::to_value(create_trade_request(&data, &preset.filters, &preset.stats).unwrap()).unwrap();
     println!("{request}");
     let filters = &request["query"]["stats"][0]["filters"];
     assert_eq!(filters[0]["id"], "implicit.stat_3762784591", "{request}");
@@ -70,7 +71,7 @@ fn viscera_modifiers_are_parsed() {
     // the tier prefix is not part of the base type the trade API knows
     let prefixed = parse_clipboard(&data, PREFIXED).unwrap();
     let preset = &create_presets(&data, &prefixed, &options).unwrap().presets[0];
-    let request = create_trade_request(&data, &preset.filters, &preset.stats).unwrap();
+    let request = serde_json::to_value(create_trade_request(&data, &preset.filters, &preset.stats).unwrap()).unwrap();
     assert_eq!(request["query"]["type"], "Crustacean's Claw", "{request}");
     assert!(
         !request["query"]["stats"][0]["filters"].as_array().unwrap().is_empty(),

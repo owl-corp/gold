@@ -10,6 +10,7 @@ fn decimal_places(value: f64, dp: bool) -> i32 {
     }
 }
 
+#[must_use]
 pub fn round_roll(value: f64, dp: bool) -> f64 {
     let rounding = 10f64.powi(decimal_places(value, dp));
     (value * rounding).trunc() / rounding

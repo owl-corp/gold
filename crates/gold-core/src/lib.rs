@@ -2,7 +2,10 @@
 //!
 //! The code keeps a stable structure so it can be compared line by line; these
 //! lints would push it away from that.
-#![allow(clippy::neg_multiply, clippy::type_complexity, clippy::if_same_then_else)]
+#![expect(
+    clippy::missing_errors_doc,
+    reason = "internal app crates, errors are anyhow/ParseError with obvious meaning"
+)]
 pub mod client_strings;
 pub mod data;
 pub mod data_update;

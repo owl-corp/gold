@@ -1,6 +1,6 @@
 //! Related-item groups: what an item is sold alongside, and what it drops or is used for.
 //!
-//! `item_drop.json` is Awakened PoE Trade's `data/item-drop.json` (MIT, SnosMe/awakened-poe-trade).
+//! `item_drop.json` is Awakened `PoE` Trade's `data/item-drop.json` (MIT, SnosMe/awakened-poe-trade).
 //! Entries read `NS::name` or `NS::name // variant`, the same ids `get_details_id` produces.
 use serde::Deserialize;
 use std::sync::OnceLock;
@@ -14,13 +14,14 @@ pub struct Group {
 }
 
 /// One entry id split into its parts.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Key<'a> {
     pub ns: &'a str,
     pub name: &'a str,
     pub variant: Option<&'a str>,
 }
 
+#[must_use]
 pub fn parse_key(id: &str) -> Option<Key<'_>> {
     let (ns, rest) = id.split_once("::")?;
     let (name, variant) = match rest.split_once(" // ") {
@@ -36,15 +37,16 @@ fn groups() -> &'static [Group] {
 }
 
 /// The first group whose related set contains this item.
+#[must_use]
 pub fn find_group(ns: &str, name: &str, variant: Option<&str>) -> Option<&'static Group> {
-    let id = match variant.filter(|v| !v.is_empty()) {
-        Some(v) => format!("{ns}::{name} // {v}"),
-        None => format!("{ns}::{name}"),
-    };
+    let id = variant
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| format!("{ns}::{name}"), |v| format!("{ns}::{name} // {v}"));
     groups().iter().find(|g| g.query.contains(&id))
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 

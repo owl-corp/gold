@@ -1,12 +1,11 @@
 //! Game data (`items.ndjson`, `stats.ndjson`) and the lookups the parser uses.
 //!
-//! Records are found through hash indexes built in memory and binary-searched, so duplicate
-//! keys always resolve to the same record.
+//! Records are found through hash maps built in memory; the first record of a duplicate key wins.
 use crate::client_strings::ClientStrings;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -92,17 +91,16 @@ pub struct StatGroup {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum StatOrGroup {
     Group(StatGroup),
-    Stat(Stat),
+    Stat(Box<Stat>),
 }
 
 impl StatOrGroup {
     fn stats(&self) -> &[Stat] {
         match self {
-            StatOrGroup::Group(g) => &g.stats,
-            StatOrGroup::Stat(s) => std::slice::from_ref(s),
+            Self::Group(g) => &g.stats,
+            Self::Stat(s) => std::slice::from_ref(&**s),
         }
     }
 }
@@ -207,39 +205,17 @@ pub struct BaseType {
     pub extra: Map<String, Value>,
 }
 
-/// 32-bit FNV-1a over the UTF-8 bytes.
-pub fn fnv1a32(s: &str) -> u32 {
-    let mut hash: u32 = 0x811c_9dc5;
-    for b in s.bytes() {
-        hash ^= u32::from(b);
-        hash = hash.wrapping_mul(16_777_619);
-    }
-    hash
-}
+/// Index of the first record per key: duplicates resolve to the earliest one.
+type Index = HashMap<String, usize>;
 
-/// Binary search: returns whichever equal entry the
-/// midpoint probing hits first, so duplicates resolve identically.
-fn binary_search(index: &[(u32, u32)], value: u32) -> Option<u32> {
-    let mut left: i64 = 0;
-    let mut right: i64 = index.len() as i64 - 1;
-    while left <= right {
-        let mid = (left + right) / 2;
-        let (hash, line) = index[mid as usize];
-        if hash < value {
-            left = mid + 1;
-        } else if hash > value {
-            right = mid - 1;
-        } else {
-            return Some(line);
-        }
-    }
-    None
+fn insert_first(index: &mut Index, key: String, line: usize) {
+    index.entry(key).or_insert(line);
 }
 
 pub struct ItemDb {
     items: Vec<BaseType>,
-    by_name: Vec<(u32, u32)>,
-    by_ref: Vec<(u32, u32)>,
+    by_name: Index,
+    by_ref: Index,
 }
 
 impl ItemDb {
@@ -249,34 +225,37 @@ impl ItemDb {
             items.push(serde_json::from_str::<BaseType>(line).with_context(|| format!("items.ndjson line {}", n + 1))?);
         }
 
-        let mut seen = std::collections::HashSet::new();
-        let (mut by_name, mut by_ref) = (Vec::new(), Vec::new());
+        // only the first record of each `refName` is indexed; later ones are found by scanning on
+        let mut seen = HashSet::new();
+        let (mut by_name, mut by_ref) = (Index::new(), Index::new());
         for (n, item) in items.iter().enumerate() {
-            if seen.insert(format!("{}::{}", item.namespace, item.ref_name)) {
-                by_name.push((fnv1a32(&format!("{}::{}", item.namespace, item.name)), n as u32));
-                by_ref.push((fnv1a32(&format!("{}::{}", item.namespace, item.ref_name)), n as u32));
+            if seen.insert((item.namespace.as_str(), item.ref_name.as_str())) {
+                insert_first(&mut by_name, format!("{}::{}", item.namespace, item.name), n);
+                insert_first(&mut by_ref, format!("{}::{}", item.namespace, item.ref_name), n);
             }
         }
-        by_name.sort_by_key(|e| e.0);
-        by_ref.sort_by_key(|e| e.0);
-        Ok(ItemDb { items, by_name, by_ref })
+        Ok(Self { items, by_name, by_ref })
     }
 
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.items.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
-    fn find(&self, index: &[(u32, u32)], ns: &str, name: &str, by_ref: bool) -> Option<Vec<BaseType>> {
-        let start = binary_search(index, fnv1a32(&format!("{ns}::{name}")))?;
+    /// The record found in `index` and the ones right after it with the same key, up to the
+    /// first that is neither a disc variant nor a unique.
+    fn find(&self, index: &Index, ns: &str, name: &str, by_ref: bool) -> Option<Vec<&BaseType>> {
+        let start = *index.get(&format!("{ns}::{name}"))?;
         let mut out = Vec::new();
-        for record in &self.items[start as usize..] {
+        for record in self.items.get(start..)? {
             let key = if by_ref { &record.ref_name } else { &record.name };
             if record.namespace == ns && key == name {
-                out.push(record.clone());
+                out.push(record);
                 if record.disc.is_none() && record.unique.is_none() {
                     break;
                 }
@@ -288,20 +267,22 @@ impl ItemDb {
     }
 
     /// `ITEM_BY_TRANSLATED`
-    pub fn by_translated(&self, ns: &str, name: &str) -> Option<Vec<BaseType>> {
+    #[must_use]
+    pub fn by_translated(&self, ns: &str, name: &str) -> Option<Vec<&BaseType>> {
         self.find(&self.by_name, ns, name, false)
     }
 
     /// `ITEM_BY_REF`
-    pub fn by_ref(&self, ns: &str, ref_name: &str) -> Option<Vec<BaseType>> {
+    #[must_use]
+    pub fn by_ref(&self, ns: &str, ref_name: &str) -> Option<Vec<&BaseType>> {
         self.find(&self.by_ref, ns, ref_name, true)
     }
 }
 
 pub struct StatDb {
     lines: Vec<StatOrGroup>,
-    by_ref: Vec<(u32, u32)>,
-    by_matcher: Vec<(u32, u32)>,
+    by_ref: Index,
+    by_matcher: Index,
 }
 
 impl StatDb {
@@ -319,7 +300,7 @@ impl StatDb {
                 serde_json::from_str::<StatOrGroup>(line).with_context(|| format!("stats.ndjson line {}", n + 1))?,
             );
         }
-        let mut plain: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut plain: HashMap<String, usize> = HashMap::new();
         for (n, line) in lines.iter().enumerate() {
             if let StatOrGroup::Stat(s) = line {
                 plain.insert(s.ref_.clone(), n);
@@ -334,73 +315,77 @@ impl StatDb {
             };
             let ids: BTreeMap<String, Vec<String>> =
                 serde_json::from_value(value.get("ids").cloned().unwrap_or_default()).with_context(context)?;
-            if let Some(&at) = plain.get(target) {
-                if let StatOrGroup::Stat(stat) = &mut lines[at] {
-                    for (kind, list) in ids {
-                        stat.trade.ids.entry(kind).or_insert(list);
-                    }
+            if let Some(StatOrGroup::Stat(stat)) = plain.get(target).and_then(|&at| lines.get_mut(at)) {
+                for (kind, list) in ids {
+                    stat.trade.ids.entry(kind).or_insert(list);
                 }
             }
         }
 
-        let (mut by_ref, mut by_matcher) = (Vec::new(), Vec::new());
+        let (mut by_ref, mut by_matcher) = (Index::new(), Index::new());
         for (n, line) in lines.iter().enumerate() {
             for stat in line.stats() {
-                by_ref.push((fnv1a32(&stat.ref_), n as u32));
+                insert_first(&mut by_ref, stat.ref_.clone(), n);
                 for m in &stat.matchers {
-                    by_matcher.push((fnv1a32(m.advanced.as_deref().unwrap_or(&m.string)), n as u32));
+                    insert_first(
+                        &mut by_matcher,
+                        m.advanced.as_deref().unwrap_or(&m.string).to_owned(),
+                        n,
+                    );
                 }
             }
         }
-        by_ref.sort_by_key(|e| e.0);
-        by_matcher.sort_by_key(|e| e.0);
-        Ok(StatDb {
+        Ok(Self {
             lines,
             by_ref,
             by_matcher,
         })
     }
 
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.lines.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
 
     /// `STAT_BY_REF_V2`
-    pub fn by_ref(&self, ref_: &str) -> Option<StatOrGroup> {
-        let line = binary_search(&self.by_ref, fnv1a32(ref_))?;
-        Some(self.lines[line as usize].clone())
+    #[must_use]
+    pub fn by_ref(&self, ref_: &str) -> Option<&StatOrGroup> {
+        self.lines.get(*self.by_ref.get(ref_)?)
     }
 
-    /// `STAT_BY_MATCH_STR_V2`. Returns a copy: callers may edit its trade ids.
-    pub fn by_match_str_v2(&self, match_str: &str) -> Option<StatOrGroup> {
-        let line = binary_search(&self.by_matcher, fnv1a32(match_str))?;
-        let found = &self.lines[line as usize];
-        let matches = |m: &StatMatcher| m.string == match_str || m.advanced.as_deref() == Some(match_str);
+    /// `STAT_BY_MATCH_STR_V2`
+    #[must_use]
+    pub fn by_match_str_v2(&self, match_str: &str) -> Option<&StatOrGroup> {
+        let found = self.lines.get(*self.by_matcher.get(match_str)?)?;
+        let is_match = |m: &StatMatcher| m.string == match_str || m.advanced.as_deref() == Some(match_str);
         found
             .stats()
             .iter()
-            .any(|s| s.matchers.iter().any(matches))
-            .then(|| found.clone())
+            .any(|s| s.matchers.iter().any(is_match))
+            .then_some(found)
     }
 
     /// `STAT_BY_MATCH_STR`: a single stat and the matcher that matched.
-    pub fn by_match_str(&self, match_str: &str) -> Option<(Stat, StatMatcher)> {
-        let matches = |m: &StatMatcher| m.string == match_str || m.advanced.as_deref() == Some(match_str);
+    #[must_use]
+    pub fn by_match_str(&self, match_str: &str) -> Option<(&Stat, &StatMatcher)> {
+        let is_match = |m: &StatMatcher| m.string == match_str || m.advanced.as_deref() == Some(match_str);
         let stat = match self.by_match_str_v2(match_str)? {
             StatOrGroup::Group(g) => {
-                let mut stats: Vec<Stat> = g.stats.into_iter().filter(|s| s.matchers.iter().any(matches)).collect();
-                if stats.len() != 1 {
+                let mut found = g.stats.iter().filter(|s| s.matchers.iter().any(is_match));
+                let stat = found.next()?;
+                if found.next().is_some() {
                     return None;
                 }
-                stats.remove(0)
+                stat
             }
             StatOrGroup::Stat(s) => s,
         };
-        let matcher = stat.matchers.iter().find(|m| matches(m))?.clone();
+        let matcher = stat.matchers.iter().find(|m| is_match(m))?;
         Some((stat, matcher))
     }
 }
@@ -412,20 +397,20 @@ pub struct GameData {
 }
 
 impl GameData {
-    /// Loads `<data_dir>/<lang>/{client_strings.js,items.ndjson,stats.ndjson}`.
-    pub fn load(data_dir: &Path, lang: &str) -> Result<Self> {
-        Self::load_with_extra(data_dir, None, lang)
+    /// Loads `<data_dir>/en/{client_strings.json,items.ndjson,stats.ndjson}`.
+    pub fn load(data_dir: &Path) -> Result<Self> {
+        Self::load_with_extra(data_dir, None)
     }
 
-    /// Like `load`, plus the items in `<extra_dir>/<lang>/items.extra.ndjson` (see
+    /// Like `load`, plus the items in `<extra_dir>/en/items.extra.ndjson` (see
     /// `data_update`) when that file exists. Shipped items come first, so they win on a clash.
-    pub fn load_with_extra(data_dir: &Path, extra_dir: Option<&Path>, lang: &str) -> Result<Self> {
-        let dir = data_dir.join(lang);
+    pub fn load_with_extra(data_dir: &Path, extra_dir: Option<&Path>) -> Result<Self> {
+        let dir = data_dir.join("en");
         let read = |name: &str| {
             std::fs::read_to_string(dir.join(name)).with_context(|| format!("reading {}/{name}", dir.display()))
         };
         let mut items = read("items.ndjson")?;
-        if let Some(extra) = extra_dir.map(|d| d.join(lang).join(EXTRA_ITEMS)) {
+        if let Some(extra) = extra_dir.map(|d| d.join("en").join(EXTRA_ITEMS)) {
             if let Ok(text) = std::fs::read_to_string(&extra) {
                 if !items.ends_with('\n') {
                     items.push('\n');
@@ -434,33 +419,28 @@ impl GameData {
             }
         }
         let stats_extra = extra_dir
-            .and_then(|d| std::fs::read_to_string(d.join(lang).join(EXTRA_STATS)).ok())
+            .and_then(|d| std::fs::read_to_string(d.join("en").join(EXTRA_STATS)).ok())
             .unwrap_or_default();
-        Ok(GameData {
-            cs: ClientStrings::parse(&read("client_strings.js")?)?,
+        Ok(Self {
+            cs: ClientStrings::parse(&read("client_strings.json")?)?,
             items: ItemDb::parse(&items)?,
             stats: StatDb::parse_with_extra(&read("stats.ndjson")?, &stats_extra)?,
         })
     }
 }
 
-/// File name of the generated extra items inside `<extra_dir>/<lang>/`.
+/// File name of the generated extra items inside `<extra_dir>/en/`.
 pub const EXTRA_ITEMS: &str = "items.extra.ndjson";
 /// File name of the generated extra stats (`StatDb::parse_with_extra`).
 pub const EXTRA_STATS: &str = "stats.extra.ndjson";
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
     use super::*;
 
     pub fn data_dir() -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
-    }
-
-    #[test]
-    fn fnv1a_known_values() {
-        assert_eq!(fnv1a32(""), 0x811c_9dc5);
-        assert_eq!(fnv1a32("a"), 0xe40c_292c);
     }
 
     fn normalise(v: Value) -> Value {
@@ -498,7 +478,7 @@ mod tests {
 
     #[test]
     fn lookups_work() {
-        let data = GameData::load(&data_dir(), "en").unwrap();
+        let data = GameData::load(&data_dir()).unwrap();
         assert!(data.items.len() > 1000 && data.stats.len() > 1000);
         let divine = data.items.by_translated("ITEM", "Divine Orb").unwrap();
         assert_eq!(divine[0].ref_name, "Divine Orb");

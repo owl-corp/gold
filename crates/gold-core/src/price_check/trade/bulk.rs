@@ -1,10 +1,11 @@
 //! Bulk item exchange for currency and similar items.
 use super::client::{relative_date, TradeClient};
+use super::request::{Num, Status};
 use super::Account;
 use crate::price_check::filters::ItemFilters;
 use anyhow::Result;
-use serde::Deserialize;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const SHOW_RESULTS: usize = 20;
 const API_FETCH_LIMIT: u64 = 100;
@@ -71,17 +72,50 @@ pub struct BulkSearch {
     pub listed: Vec<BulkListing>,
 }
 
+/// The body sent to `api/trade/exchange/<league>`.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Hash)]
+pub struct BulkRequest {
+    pub engine: &'static str,
+    pub query: BulkQuery,
+    pub sort: BulkSort,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Hash)]
+pub struct BulkQuery {
+    pub have: Vec<String>,
+    pub want: [String; 1],
+    pub status: Status,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum: Option<Num>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Hash)]
+pub struct BulkSort {
+    pub have: &'static str,
+}
+
 /// `createTradeRequest` of the bulk module. `want` is the item's trade tag.
-pub fn create_bulk_request(filters: &ItemFilters, want: &str, have: &[&str]) -> Value {
-    let mut query = json!({ "have": have, "want": [want], "status": { "option": "any" } });
-    if let Some(min) = filters.stack_size.as_ref().filter(|f| !f.disabled) {
-        query["minimum"] = json!(min.value);
+#[must_use]
+pub fn create_bulk_request(filters: &ItemFilters, want: &str, have: &[&str]) -> BulkRequest {
+    BulkRequest {
+        engine: "new",
+        query: BulkQuery {
+            have: have.iter().map(|h| (*h).to_string()).collect(),
+            want: [want.to_string()],
+            status: Status { option: "any" },
+            minimum: filters
+                .stack_size
+                .as_ref()
+                .filter(|f| !f.disabled)
+                .map(|min| Num(min.value as f64)),
+        },
+        sort: BulkSort { have: "asc" },
     }
-    json!({ "engine": "new", "query": query, "sort": { "have": "asc" } })
 }
 
 /// The currencies to price an item in. At league start many players set wrong prices,
 /// so Chaos and Divine Orbs are priced in the other one only.
+#[must_use]
 pub fn default_have(item_ref_name: &str) -> Vec<&'static str> {
     match item_ref_name {
         "Chaos Orb" => vec!["divine"],
@@ -102,22 +136,27 @@ pub async fn exec_bulk_search(
     let raw = client.exchange(&body, &filters.trade.league).await?;
     let query: SearchResult = serde_json::from_value(raw)?;
 
-    let offer = 0;
     // a listing that doesn't have the expected shape is skipped, not fatal
     let parsed: Vec<FetchResult> = query
         .result
         .values()
         .filter_map(|v| serde_json::from_value(v.clone()).ok())
         .collect();
-    let results: Vec<&FetchResult> = parsed.iter().filter(|r| r.listing.offers.len() == 1).collect();
+    let results: Vec<(&FetchResult, &Offer)> = parsed
+        .iter()
+        .filter_map(|r| match r.listing.offers.as_slice() {
+            [offer] => Some((r, offer)),
+            _ => None,
+        })
+        .collect();
 
     Ok(have
         .iter()
         .map(|tag| {
-            let mut of_tag: Vec<&FetchResult> = results
+            let mut of_tag: Vec<(&FetchResult, &Offer)> = results
                 .iter()
                 .copied()
-                .filter(|r| r.listing.offers[offer].exchange.currency == *tag)
+                .filter(|(_, o)| o.exchange.currency == *tag)
                 .collect();
 
             let loaded_on_demand = *tag == "chaos" && of_tag.len() < SHOW_RESULTS && query.total > API_FETCH_LIMIT;
@@ -125,12 +164,12 @@ pub async fn exec_bulk_search(
                 return None;
             }
 
-            let ratio = |r: &FetchResult| r.listing.offers[offer].exchange.amount / r.listing.offers[offer].item.amount;
+            let ratio = |(_, o): &(&FetchResult, &Offer)| o.exchange.amount / o.item.amount;
             of_tag.sort_by(|a, b| ratio(a).partial_cmp(&ratio(b)).unwrap_or(std::cmp::Ordering::Equal));
             let listed = of_tag
                 .iter()
                 .take(SHOW_RESULTS)
-                .map(|r| to_listing(r, my_account, offer))
+                .map(|(r, o)| to_listing(r, o, my_account))
                 .collect();
 
             let chaos_is_loaded = *tag == "divine"
@@ -152,8 +191,7 @@ pub async fn exec_bulk_search(
         .collect())
 }
 
-fn to_listing(result: &FetchResult, my_account: Option<&str>, offer: usize) -> BulkListing {
-    let o = &result.listing.offers[offer];
+fn to_listing(result: &FetchResult, o: &Offer, my_account: Option<&str>) -> BulkListing {
     let account = &result.listing.account;
     BulkListing {
         id: result.id.clone(),
@@ -169,8 +207,10 @@ fn to_listing(result: &FetchResult, my_account: Option<&str>, offer: usize) -> B
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn listing(id: &str, currency: &str, exchange: f64, item: f64) -> Value {
         json!({ "id": id, "listing": {
@@ -204,7 +244,10 @@ mod tests {
         let ratio = |r: &FetchResult| r.listing.offers[0].exchange.amount / r.listing.offers[0].item.amount;
         of_chaos.sort_by(|a, b| ratio(a).partial_cmp(&ratio(b)).unwrap());
         assert_eq!(of_chaos[0].id, "b"); // 100 per item beats 150 per item
-        assert_eq!(to_listing(of_chaos[0], None, 0).account_status, "offline");
+        assert_eq!(
+            to_listing(of_chaos[0], &of_chaos[0].listing.offers[0], None).account_status,
+            "offline"
+        );
     }
 
     #[test]

@@ -1,22 +1,17 @@
 //! Finding the base type inside a magic item's name.
 use crate::data::ItemDb;
 
+#[must_use]
 pub fn magic_basetype(items: &ItemDb, name: &str) -> Option<String> {
-    // Chinese and Japanese don't use spaces to separate words, so fallback to characters
-    let (words, separator): (Vec<&str>, &str) = if name.contains(' ') {
-        (name.split(' ').collect(), " ")
-    } else {
-        (
-            name.char_indices().map(|(i, c)| &name[i..i + c.len_utf8()]).collect(),
-            "",
-        )
-    };
+    let words: Vec<&str> = name.split(' ').collect();
 
     // every run of consecutive words
     let mut candidates: Vec<String> = Vec::new();
     for start in 0..words.len() {
         for end in start..words.len() {
-            candidates.push(words[start..=end].join(separator));
+            if let Some(run) = words.get(start..=end) {
+                candidates.push(run.join(" "));
+            }
         }
     }
 

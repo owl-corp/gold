@@ -1,8 +1,8 @@
 //! The price check from copy to results, and the overlay's actions.
 use crate::app::App;
 use crate::session::{SearchState, Session};
-use crate::ui::Ui;
-use crate::view::{self, Placement};
+use crate::ui::{Action, TradeKey, Ui};
+use crate::view::{self, Placement, View};
 use crate::{clipboard, hypr, search};
 use anyhow::{bail, Result};
 use gold_core::parser::item::{ItemRarity, ParsedItem};
@@ -11,12 +11,11 @@ use gold_core::parser::parse_clipboard;
 use gold_core::price_check::filters::presets::{create_presets, FilterPreset, Unsupported};
 use gold_core::price_check::filters::ItemFilters;
 use gold_core::price_check::trade::category_to_trade_id;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Runs `f` on the current session if it is still the one for `epoch`.
 fn update<R>(app: &App, epoch: u64, f: impl FnOnce(&mut Session) -> R) -> Option<R> {
-    let mut guard = app.session.lock().unwrap();
+    let mut guard = app.session.lock();
     guard.as_mut().filter(|s| s.epoch == epoch).map(f)
 }
 
@@ -24,15 +23,15 @@ fn update<R>(app: &App, epoch: u64, f: impl FnOnce(&mut Session) -> R) -> Option
 /// The check and the send happen under the session lock, so a close or a newer check can't
 /// slip in between and a stale view can't reach the overlay after a newer one.
 fn show(app: &App, ui: &Ui, epoch: u64) {
-    let guard = app.session.lock().unwrap();
+    let guard = app.session.lock();
     if let Some(s) = guard.as_ref().filter(|s| s.epoch == epoch && app.is_current(epoch)) {
-        ui.show(view::render(s));
+        ui.show(&view::render(s));
     }
 }
 
 /// Shows a view that isn't part of a session, if `epoch` is still current.
-fn show_standalone(app: &App, ui: &Ui, epoch: u64, view: Value) {
-    let _guard = app.session.lock().unwrap();
+fn show_standalone(app: &App, ui: &Ui, epoch: u64, view: &View) {
+    let _guard = app.session.lock();
     if app.is_current(epoch) {
         ui.show(view);
     }
@@ -41,7 +40,7 @@ fn show_standalone(app: &App, ui: &Ui, epoch: u64, view: Value) {
 /// Hides the overlay and invalidates everything still in flight for it.
 /// Returns whether there was an overlay to close.
 pub fn close(app: &App, ui: &Ui) -> bool {
-    let guard = app.session.lock().unwrap();
+    let guard = app.session.lock();
     app.next_epoch();
     ui.hide();
     guard.is_some()
@@ -49,7 +48,7 @@ pub fn close(app: &App, ui: &Ui) -> bool {
 
 /// The overlay closed itself (Esc): invalidate everything still in flight for it.
 pub fn closed_by_overlay(app: &App) {
-    let _guard = app.session.lock().unwrap();
+    let _guard = app.session.lock();
     app.next_epoch();
 }
 
@@ -73,7 +72,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
                     app,
                     ui,
                     epoch,
-                    view::error_view(&place, "Copy failed", vec![format!("{e:#}")]),
+                    &view::error_view(&place, "Copy failed", vec![format!("{e:#}")]),
                 );
             }
             return Err(e);
@@ -87,7 +86,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
         Err(e) => {
             let mut lines = vec![e.code().to_string()];
             lines.extend(text.lines().take(12).map(String::from));
-            show_standalone(app, ui, epoch, view::error_view(&place, "Item not recognised", lines));
+            show_standalone(app, ui, epoch, &view::error_view(&place, "Item not recognised", lines));
             return Ok(());
         }
     };
@@ -95,7 +94,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     let (presets, active, note) = match app.league().await {
         Err(e) => (vec![], 0, Some(format!("No league: {e:#}"))),
         Ok(league) => {
-            let opts = app.preset_options(league.clone());
+            let opts = app.preset_options(league);
             match create_presets(&app.data, &item, &opts) {
                 Ok(p) => {
                     let active = p.presets.iter().position(|x| x.id == p.active).unwrap_or(0);
@@ -115,7 +114,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     };
     let auto = presets.get(active).is_some_and(|p| search_on_open(&item, p));
     {
-        let mut guard = app.session.lock().unwrap();
+        let mut guard = app.session.lock();
         if !app.is_current(epoch) {
             // closed, or replaced by a newer check, while this one was still working
             return Ok(());
@@ -152,26 +151,26 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
 /// Where the overlay goes: on the monitor under the cursor, at the cursor.
 async fn placement() -> Result<Placement> {
     let cursor = hypr::cursor_pos().await?;
-    let (screen, x, y) = hypr::locate(hypr::monitors().await?, &cursor).unwrap_or((String::new(), cursor.x, cursor.y));
+    let (screen, x, y) = hypr::locate(&hypr::monitors().await?, &cursor).unwrap_or((String::new(), cursor.x, cursor.y));
     Ok(Placement { screen, x, y })
 }
 
 /// Whether the search starts by itself when the overlay opens (`smartInitialSearch`).
 fn search_on_open(item: &ParsedItem, preset: &FilterPreset) -> bool {
-    use ItemCategory::*;
+    use ItemCategory::{Charm, HeistBlueprint, HeistContract, Idol, SanctumRelic};
     let cat = known(&item.category);
     item.rarity == Some(ItemRarity::Unique)
         || preset.id == "filters.preset_bulk"
-        || item.map_completion_reward.is_some()
+        || item.map.completion_reward.is_some()
         || matches!(cat, Some(HeistContract | HeistBlueprint | SanctumRelic | Charm | Idol))
         || (cat.and_then(category_to_trade_id).is_none() && item.info.ref_name != "Mercenary Warrant")
-        || item.is_unidentified
-        || item.is_veiled == Some(true)
+        || item.status.is_unidentified
+        || item.mod_marks.is_veiled
 }
 
 fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
     let snapshot = {
-        let mut guard = app.session.lock().unwrap();
+        let mut guard = app.session.lock();
         let Some(s) = guard.as_mut().filter(|s| s.epoch == epoch) else {
             return;
         };
@@ -181,7 +180,9 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
         }
         s.search = SearchState::Loading;
         s.search_gen += 1;
-        (s.item.clone(), preset, s.search_gen)
+        let snapshot = (s.item.clone(), preset, s.search_gen);
+        drop(guard);
+        snapshot
     };
     show(app, ui, epoch);
 
@@ -203,21 +204,22 @@ fn start_search(app: &Arc<App>, ui: &Ui, epoch: u64) {
 }
 
 /// Flips or cycles one trade filter. Returns whether it changed.
-fn apply_trade_filter(f: &mut ItemFilters, key: &str) -> bool {
+fn apply_trade_filter(f: &mut ItemFilters, key: TradeKey) -> bool {
     match key {
-        "magicOnly" => match &mut f.rarity {
-            Some(r) if r.value == "magic" => r.disabled = !r.disabled,
-            _ => return false,
+        TradeKey::MagicOnly => match &mut f.rarity {
+            Some(r) if r.value == "magic" => {
+                r.disabled = !r.disabled;
+                true
+            }
+            _ => false,
         },
-        _ => return false,
     }
-    true
 }
 
 /// Fetches the next listings of the first trade search and appends them.
 fn more(app: &Arc<App>, ui: &Ui, epoch: u64) {
     let snapshot = {
-        let mut guard = app.session.lock().unwrap();
+        let mut guard = app.session.lock();
         let Some(s) = guard.as_mut().filter(|s| s.epoch == epoch) else {
             return;
         };
@@ -237,7 +239,9 @@ fn more(app: &Arc<App>, ui: &Ui, epoch: u64) {
             return;
         };
         s.fetching_more = true;
-        (id, ids, s.search_gen)
+        let snapshot = (id, ids, s.search_gen);
+        drop(guard);
+        snapshot
     };
     show(app, ui, epoch);
 
@@ -267,25 +271,21 @@ fn more(app: &Arc<App>, ui: &Ui, epoch: u64) {
     });
 }
 
-fn number(v: &Value) -> Option<f64> {
-    v.as_f64()
-}
-
 /// An action from the overlay: toggle or edit a filter, switch preset, search.
-pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
+pub fn handle_action(app: &Arc<App>, ui: &Ui, action: &Action) {
     // actions carry the epoch of the view they were clicked in; a click on a view that
     // has since been replaced must not touch the new item's filters
-    let Some(epoch) = action["epoch"].as_u64() else { return };
-    let matches_session = app.session.lock().unwrap().as_ref().is_some_and(|s| s.epoch == epoch);
+    let Some(epoch) = action.epoch() else { return };
+    let matches_session = app.session.lock().as_ref().is_some_and(|s| s.epoch == epoch);
     if !matches_session || !app.is_current(epoch) {
         return;
     }
-    let index = action["index"].as_u64().map(|i| i as usize);
 
-    match action["type"].as_str().unwrap_or("") {
-        "toggle" => {
+    match action {
+        Action::Closed => {}
+        Action::Toggle { index, .. } => {
             update(app, epoch, |s| {
-                if let Some(f) = s.preset_mut().and_then(|p| index.and_then(|i| p.stats.get_mut(i))) {
+                if let Some(f) = s.preset_mut().and_then(|p| p.stats.get_mut(*index)) {
                     f.disabled = !f.disabled;
                     s.search = SearchState::Idle;
                     s.search_gen += 1;
@@ -293,12 +293,12 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
             });
             show(app, ui, epoch);
         }
-        "set" => {
+        Action::Set { index, min, max, .. } => {
             update(app, epoch, |s| {
-                if let Some(f) = s.preset_mut().and_then(|p| index.and_then(|i| p.stats.get_mut(i))) {
+                if let Some(f) = s.preset_mut().and_then(|p| p.stats.get_mut(*index)) {
                     if let Some(roll) = f.roll.as_mut() {
-                        roll.min = number(&action["min"]);
-                        roll.max = number(&action["max"]);
+                        roll.min = *min;
+                        roll.max = *max;
                         f.disabled = false;
                         s.search = SearchState::Idle;
                         s.search_gen += 1;
@@ -307,29 +307,27 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
             });
             show(app, ui, epoch);
         }
-        "preset" => {
+        Action::Preset { index, .. } => {
             update(app, epoch, |s| {
-                if let Some(i) = index.filter(|i| *i < s.presets.len()) {
-                    s.active = i;
+                if *index < s.presets.len() {
+                    s.active = *index;
                     s.search = SearchState::Idle;
                     s.search_gen += 1;
                 }
             });
             show(app, ui, epoch);
         }
-        "search" => start_search(app, ui, epoch),
-        "hidden" => {
+        Action::Search { .. } => start_search(app, ui, epoch),
+        Action::Hidden { .. } => {
             update(app, epoch, |s| s.show_hidden = !s.show_hidden);
             show(app, ui, epoch);
         }
-        "more" => more(app, ui, epoch),
-        "trade" => {
+        Action::More { .. } => more(app, ui, epoch),
+        Action::Trade { key, .. } => {
             // a changed trade filter re-runs the search, if the user had run one
             let rerun = update(app, epoch, |s| {
                 let had_search = !matches!(s.search, SearchState::Idle);
-                let changed = s
-                    .preset_mut()
-                    .is_some_and(|p| apply_trade_filter(&mut p.filters, action["key"].as_str().unwrap_or("")));
+                let changed = s.preset_mut().is_some_and(|p| apply_trade_filter(&mut p.filters, *key));
                 if changed {
                     s.search = SearchState::Idle;
                     s.search_gen += 1;
@@ -342,22 +340,18 @@ pub async fn handle_action(app: &Arc<App>, ui: &Ui, action: Value) {
                 start_search(app, ui, epoch);
             }
         }
-        _ => {}
     }
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests may panic on failure")]
 mod tests {
     use super::*;
     use gold_core::data::GameData;
     use gold_core::price_check::filters::presets::PresetOptions;
 
     fn data() -> GameData {
-        GameData::load(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
-            "en",
-        )
-        .unwrap()
+        GameData::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
     }
 
     /// Whether the search starts by itself for this item text.

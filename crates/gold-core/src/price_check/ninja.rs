@@ -119,22 +119,25 @@ impl NinjaDb {
                 })
             })
             .collect();
-        Ok(NinjaDb {
+        Ok(Self {
             league: league.to_string(),
             sections,
             fetched_at: std::time::Instant::now(),
         })
     }
 
+    #[must_use]
     pub fn league(&self) -> &str {
         &self.league
     }
 
+    #[must_use]
     pub fn is_stale(&self) -> bool {
         self.fetched_at.elapsed().as_secs() > UPDATE_INTERVAL_SECS
     }
 
     /// `findPriceByQuery`: the first entry with exactly this name and variant.
+    #[must_use]
     pub fn find(&self, ns: &str, name: &str, variant: Option<&str>) -> Option<Price> {
         for section in self.sections.iter().filter(|s| s.ns == ns) {
             if let Some(info) = section
@@ -158,6 +161,7 @@ impl NinjaDb {
     }
 
     /// Every entry of the section that `find` takes this one from, with its url.
+    #[must_use]
     pub fn section_prices(&self, ns: &str, name: &str, variant: Option<&str>) -> Option<Vec<Price>> {
         let section = self.sections.iter().filter(|s| s.ns == ns).find(|s| {
             s.lines
@@ -182,6 +186,7 @@ impl NinjaDb {
     }
 
     /// Mean chaos value of every entry in `ns` whose name ends with `suffix` (None if there is none).
+    #[must_use]
     pub fn average_chaos_by_suffix(&self, ns: &str, suffix: &str) -> Option<f64> {
         let values: Vec<f64> = self
             .sections
@@ -195,6 +200,7 @@ impl NinjaDb {
     }
 
     /// Chaos orbs per Divine Orb, when poe.ninja has a believable value.
+    #[must_use]
     pub fn divine_rate(&self) -> Option<f64> {
         let divine = self.find("ITEM", "Divine Orb", None)?;
         (divine.info.chaos >= 30.0).then_some(divine.info.chaos)
@@ -241,6 +247,7 @@ pub enum Currency {
 }
 
 /// `autoCurrency` for a single value: show it in divines when it is close to one or more.
+#[must_use]
 pub fn auto_currency(value: f64, xchg_rate: Option<f64>) -> CurrencyValue {
     let rate = xchg_rate.unwrap_or(9999.0);
     if value > rate * 0.94 {
@@ -270,9 +277,9 @@ pub fn auto_currency(value: f64, xchg_rate: Option<f64>) -> CurrencyValue {
 fn to_fixed_1(v: f64) -> String {
     let exact = format!("{:.60}", v.abs());
     let (int, frac) = exact.split_once('.').unwrap_or((&exact, "0"));
-    let digits = frac.as_bytes();
-    let mut tenths = int.parse::<u64>().unwrap_or(0) * 10 + u64::from(digits[0] - b'0');
-    if digits[1] >= b'5' {
+    let mut digits = frac.bytes().map(|b| u64::from(b.saturating_sub(b'0')));
+    let mut tenths = int.parse::<u64>().unwrap_or(0) * 10 + digits.next().unwrap_or(0);
+    if digits.next().unwrap_or(0) >= 5 {
         tenths += 1;
     }
     let out = format!("{}.{}", tenths / 10, tenths % 10);
@@ -284,6 +291,7 @@ fn to_fixed_1(v: f64) -> String {
 }
 
 /// `displayRounding`
+#[must_use]
 pub fn display_rounding(value: f64, fraction: bool) -> String {
     if fraction && value.abs() < 1.0 {
         if value == 0.0 {
@@ -301,26 +309,29 @@ pub fn display_rounding(value: f64, fraction: bool) -> String {
 }
 
 /// The price movement shown next to a trend (`deltaFromGraph` in `PriceTrend.vue`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trend {
     pub forecast: &'static str,
     pub text: String,
 }
 
+#[must_use]
 pub fn delta_from_graph(graph: &[Option<f64>]) -> Option<Trend> {
     let points: Vec<f64> = graph.iter().flatten().copied().collect();
     if points.len() < 2 {
         return None;
     }
 
-    let mut forecast = "const";
-    if points.len() == 7 {
-        if points.iter().filter(|p| **p > 0.0).count() >= 4 || points[4..].iter().all(|p| *p > 0.0) {
-            forecast = "up";
-        } else if points.iter().filter(|p| **p < 0.0).count() >= 4 || points[4..].iter().all(|p| *p < 0.0) {
-            forecast = "down";
-        }
-    }
+    let tail = points.get(4..).unwrap_or_default();
+    let forecast = if points.len() != 7 {
+        "const"
+    } else if points.iter().filter(|p| **p > 0.0).count() >= 4 || tail.iter().all(|p| *p > 0.0) {
+        "up"
+    } else if points.iter().filter(|p| **p < 0.0).count() >= 4 || tail.iter().all(|p| *p < 0.0) {
+        "down"
+    } else {
+        "const"
+    };
 
     let mean = points.iter().sum::<f64>() / points.len() as f64;
     let variance = points.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (points.len() - 1) as f64;
@@ -332,6 +343,7 @@ pub fn delta_from_graph(graph: &[Option<f64>]) -> Option<Trend> {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 

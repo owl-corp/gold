@@ -6,8 +6,11 @@ pub mod related;
 pub mod trade;
 
 /// `floorToBracket`: the largest bracket not above `value` (the first if none).
-pub fn floor_to_bracket(value: f64, brackets: &[f64]) -> f64 {
-    let mut prev = brackets[0];
+pub fn floor_to_bracket<T: Copy + PartialOrd>(value: T, brackets: &[T]) -> T {
+    let Some(&first) = brackets.first() else {
+        return value;
+    };
+    let mut prev = first;
     for &num in brackets {
         if num > value {
             return prev;
@@ -18,8 +21,11 @@ pub fn floor_to_bracket(value: f64, brackets: &[f64]) -> f64 {
 }
 
 /// `ceilToBracket`: the smallest bracket not below `value` (the first if none).
-pub fn ceil_to_bracket(value: f64, brackets: &[f64]) -> f64 {
-    let mut prev = brackets[0];
+pub fn ceil_to_bracket<T: Copy + PartialOrd>(value: T, brackets: &[T]) -> T {
+    let Some(&first) = brackets.first() else {
+        return value;
+    };
+    let mut prev = first;
     for &num in brackets {
         if num < value {
             return prev;

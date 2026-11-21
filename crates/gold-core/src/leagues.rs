@@ -3,8 +3,8 @@ use anyhow::{bail, Result};
 use serde::Deserialize;
 
 /// Names of the permanent leagues.
-pub const PERMANENT_SC: [&str; 2] = ["Standard", "標準模式"];
-const PERMANENT_HC: [&str; 2] = ["Hardcore", "專家模式"];
+pub const PERMANENT_SC: [&str; 1] = ["Standard"];
+const PERMANENT_HC: [&str; 1] = ["Hardcore"];
 
 #[derive(Deserialize)]
 struct ApiLeague {
@@ -55,6 +55,7 @@ pub fn default_league(leagues: &[String]) -> Option<&str> {
 }
 
 /// Private leagues have no public prices.
+#[must_use]
 pub fn is_private(id: &str) -> bool {
     if id.contains("Ruthless") {
         return true;
@@ -66,6 +67,7 @@ pub fn is_private(id: &str) -> bool {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
 

@@ -36,8 +36,14 @@ impl Account {
 }
 
 /// `CATEGORY_TO_TRADE_ID`: the trade site's category option for an item category.
-pub fn category_to_trade_id(c: ItemCategory) -> Option<&'static str> {
-    use ItemCategory::*;
+#[must_use]
+pub const fn category_to_trade_id(c: ItemCategory) -> Option<&'static str> {
+    use ItemCategory::{
+        AbyssJewel, Amulet, Belt, BodyArmour, Boots, Bow, Charm, Chart, Claw, ClusterJewel, Dagger, FishingRod, Flask,
+        Gloves, Graft, HeistBlueprint, HeistBrooch, HeistCloak, HeistContract, HeistGear, HeistTool, Helmet, Idol,
+        Jewel, Map, OneHandedAxe, OneHandedMace, OneHandedSword, Quiver, Ring, RuneDagger, SanctumRelic, Sceptre,
+        Shield, Staff, Tincture, Trinket, TwoHandedAxe, TwoHandedMace, TwoHandedSword, Wand, Warstaff,
+    };
     Some(match c {
         Map => "map",
         AbyssJewel => "jewel.abyss",

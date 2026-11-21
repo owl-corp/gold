@@ -31,20 +31,21 @@ pub struct Search {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sub: Option<Box<Search>>,
+    pub sub: Option<Box<Self>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct FilterNumeric {
-    pub value: f64,
+    pub value: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max: Option<f64>,
+    pub max: Option<i64>,
     pub disabled: bool,
 }
 
 impl FilterNumeric {
-    pub fn new(value: f64, disabled: bool) -> Self {
-        FilterNumeric {
+    #[must_use]
+    pub const fn new(value: i64, disabled: bool) -> Self {
+        Self {
             value,
             max: None,
             disabled,
@@ -179,15 +180,15 @@ pub struct ItemFilters {
 pub struct FilterTag(pub &'static str);
 
 impl FilterTag {
-    pub const PSEUDO: FilterTag = FilterTag("pseudo");
-    pub const EXPLICIT: FilterTag = FilterTag("explicit");
-    pub const IMPLICIT: FilterTag = FilterTag("implicit");
-    pub const ENCHANT: FilterTag = FilterTag("enchant");
-    pub const FRACTURED: FilterTag = FilterTag("fractured");
-    pub const FOULBORN: FilterTag = FilterTag("foulborn");
-    pub const VESTIGIAL: FilterTag = FilterTag("vestigial");
-    pub const VARIANT: FilterTag = FilterTag("variant");
-    pub const PROPERTY: FilterTag = FilterTag("property");
+    pub const PSEUDO: Self = Self("pseudo");
+    pub const EXPLICIT: Self = Self("explicit");
+    pub const IMPLICIT: Self = Self("implicit");
+    pub const ENCHANT: Self = Self("enchant");
+    pub const FRACTURED: Self = Self("fractured");
+    pub const FOULBORN: Self = Self("foulborn");
+    pub const VESTIGIAL: Self = Self("vestigial");
+    pub const VARIANT: Self = Self("variant");
+    pub const PROPERTY: Self = Self("property");
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -275,7 +276,7 @@ pub const INTERNAL_TRADE_IDS: &[&str] = &[
     "item.heist_target_priceless",
     "item.heist_wings_revealed",
     "item.heist_wings_total",
-    "item.chart_sulphur",
+    "item.map.chart_sulphur",
 ];
 
 pub const HAS_EMPTY_MODIFIER_ANY: f64 = 0.0;

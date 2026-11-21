@@ -1,5 +1,6 @@
 //! Items from `gold data update` (generated from trade API data) go through the parser
 //! and the request builder like shipped ones. Not covered by the golden corpus.
+#![expect(clippy::unwrap_used, clippy::indexing_slicing, reason = "tests")]
 use gold_core::data::GameData;
 use gold_core::data_update::extra_items;
 use gold_core::parser::parse_clipboard;
@@ -46,7 +47,7 @@ fn request(data: &GameData, text: &str) -> Value {
     let item = parse_clipboard(data, text).unwrap();
     let presets = create_presets(data, &item, &options).unwrap();
     let preset = &presets.presets[0];
-    create_trade_request(data, &preset.filters, &preset.stats).unwrap()
+    serde_json::to_value(create_trade_request(data, &preset.filters, &preset.stats).unwrap()).unwrap()
 }
 
 #[test]
@@ -63,7 +64,7 @@ fn generated_items_are_priced() {
         extra.lines.join("\n"),
     )
     .unwrap();
-    let data = GameData::load_with_extra(&root.join("../../assets"), Some(&dir), "en").unwrap();
+    let data = GameData::load_with_extra(&root.join("../../assets"), Some(&dir)).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 
     let omen = request(&data, OMEN);

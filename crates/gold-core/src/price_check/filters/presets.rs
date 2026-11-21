@@ -1,10 +1,10 @@
 //! Which filter presets an item gets.
 use super::item_filters::{create_filters, CreateOptions};
 use super::stat_filters::{create_exact_stat_filters, create_mercenary_filters, init_ui_mod_filters, Mode};
-use super::*;
+use super::{ItemFilters, StatFilter};
 use crate::data::GameData;
 use crate::parser::item::{ItemRarity, ParsedItem};
-use crate::parser::meta::{is, known, ItemCategory};
+use crate::parser::meta::{known, ItemCategory};
 use crate::parser::modifiers::ModifierType;
 use anyhow::Result;
 
@@ -53,8 +53,57 @@ fn item_opts(opts: &PresetOptions, exact: bool) -> CreateOptions {
     }
 }
 
+/// Presets of an unidentified-value map or chart: bulk, plus a props search for rares.
+fn map_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions, cat: Option<ItemCategory>) -> Result<Presets> {
+    let range = SEARCH_STAT_RANGE;
+    let exact_filters = |exact: bool| create_filters(data, item, &item_opts(opts, exact));
+    let bulk = FilterPreset {
+        id: "filters.preset_bulk",
+        filters: exact_filters(true)?,
+        stats: create_exact_stat_filters(data, item, &item.stats_by_type, range, Mode::Bulk)?,
+    };
+    let blighted = item
+        .info
+        .area
+        .as_ref()
+        .and_then(|a| a.get("blighted"))
+        .and_then(serde_json::Value::as_bool)
+        == Some(true);
+    if item.rarity == Some(ItemRarity::Rare) && !item.status.is_unidentified && !blighted {
+        let props = FilterPreset {
+            id: "filters.preset_pseudo",
+            filters: exact_filters(true)?,
+            stats: create_exact_stat_filters(data, item, &item.stats_by_type, range, Mode::Props)?,
+        };
+        let special_area = item
+            .map
+            .area
+            .as_ref()
+            .and_then(|a| a.area.as_ref())
+            .and_then(|a| a.get("special"))
+            .and_then(serde_json::Value::as_bool)
+            == Some(true);
+        let active = if cat == Some(ItemCategory::Chart) && special_area {
+            bulk.id
+        } else {
+            props.id
+        };
+        return Ok(Presets {
+            active,
+            presets: vec![props, bulk],
+        });
+    }
+    Ok(Presets {
+        active: bulk.id,
+        presets: vec![bulk],
+    })
+}
+
 pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) -> Result<Presets> {
-    use ItemCategory::*;
+    use ItemCategory::{
+        AbyssJewel, Charm, Chart, ClusterJewel, Flask, HeistBlueprint, HeistContract, Idol, Invitation, Jewel, Map,
+        MemoryLine, SanctumRelic, Sentinel, Tincture,
+    };
     let name = item.info.ref_name.as_str();
     if name == "Expedition Logbook"
         || item
@@ -84,7 +133,7 @@ pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) 
     }
 
     if (item.info.craftable.is_none() && !unique)
-        || item.is_unidentified
+        || item.status.is_unidentified
         || item.rarity == Some(ItemRarity::Normal)
         || (cat == Some(Flask) && !unique)
         || (cat == Some(Tincture) && !unique)
@@ -95,46 +144,8 @@ pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) 
             Some(Charm | Map | MemoryLine | Invitation | HeistContract | HeistBlueprint | Chart | Sentinel)
         )
     {
-        if !unique && ((cat == Some(Map) && item.map_completion_reward.is_none()) || cat == Some(Chart)) {
-            let bulk = FilterPreset {
-                id: "filters.preset_bulk",
-                filters: exact_filters(true)?,
-                stats: create_exact_stat_filters(data, item, &item.stats_by_type, range, Mode::Bulk)?,
-            };
-            let blighted = item
-                .info
-                .area
-                .as_ref()
-                .and_then(|a| a.get("blighted"))
-                .and_then(|b| b.as_bool())
-                == Some(true);
-            if item.rarity == Some(ItemRarity::Rare) && !item.is_unidentified && !blighted {
-                let props = FilterPreset {
-                    id: "filters.preset_pseudo",
-                    filters: exact_filters(true)?,
-                    stats: create_exact_stat_filters(data, item, &item.stats_by_type, range, Mode::Props)?,
-                };
-                let special_area = item
-                    .map_area
-                    .as_ref()
-                    .and_then(|a| a.area.as_ref())
-                    .and_then(|a| a.get("special"))
-                    .and_then(|s| s.as_bool())
-                    == Some(true);
-                let active = if cat == Some(Chart) && special_area {
-                    bulk.id
-                } else {
-                    props.id
-                };
-                return Ok(Presets {
-                    active,
-                    presets: vec![props, bulk],
-                });
-            }
-            return Ok(Presets {
-                active: bulk.id,
-                presets: vec![bulk],
-            });
+        if !unique && ((cat == Some(Map) && item.map.completion_reward.is_none()) || cat == Some(Chart)) {
+            return map_presets(data, item, opts, cat);
         }
 
         let exact = FilterPreset {
@@ -156,18 +167,17 @@ pub fn create_presets(data: &GameData, item: &ParsedItem, opts: &PresetOptions) 
 
     let likely_finished = unique
         || item.stats_by_type.iter().any(|c| c.type_ == ModifierType::Crafted)
-        || (item.quality == Some(20.0) && item.memory_strands.is_none()) // quality > 20 can be used for selling bases, quality < 20 drops sometimes
-        || item.is_corrupted
-        || item.is_mirrored == Some(true);
+        || (item.quality == Some(20) && item.memory_strands.is_none()) // quality > 20 can be used for selling bases, quality < 20 drops sometimes
+        || item.status.is_corrupted
+        || item.origin.is_mirrored;
 
-    let has_crafting_value = item.is_synthesised == Some(true)
-        || item.is_fractured == Some(true)
+    let has_crafting_value = item.origin.is_synthesised
+        || item.mod_marks.is_fractured
         || !item.influences.is_empty()
         || cat == Some(ClusterJewel)
         || (cat == Some(Jewel) && item.rarity == Some(ItemRarity::Magic))
-        || (!matches!(cat, Some(Jewel | AbyssJewel)) && item.item_level.is_some_and(|l| l >= 82.0));
+        || (!matches!(cat, Some(Jewel | AbyssJewel)) && item.item_level.is_some_and(|l| l >= 82));
 
-    let _ = is(&item.category, ItemCategory::Map);
     if likely_finished || !has_crafting_value {
         return Ok(Presets {
             active: pseudo.id,

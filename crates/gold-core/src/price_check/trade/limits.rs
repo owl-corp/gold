@@ -3,7 +3,8 @@
 //! GGG sends its rules in `x-rate-limit-*` headers on every response. The client keeps
 //! a window per rule, waits when one is full, and adopts new rules as they appear.
 use anyhow::{bail, Result};
-use std::sync::Mutex;
+use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::time::Instant;
 
@@ -12,12 +13,14 @@ struct Limiter {
     max: u32,
     window: Duration,
     /// when each request in the window frees its slot
-    stack: Vec<Instant>,
+    stack: VecDeque<Instant>,
 }
 
 impl Limiter {
     fn prune(&mut self, now: Instant) {
-        self.stack.retain(|t| *t > now);
+        while self.stack.front().is_some_and(|t| *t <= now) {
+            self.stack.pop_front();
+        }
     }
 
     fn available(&self) -> u32 {
@@ -25,7 +28,7 @@ impl Limiter {
     }
 
     fn borrow(&mut self, now: Instant) {
-        self.stack.push(now + self.window);
+        self.stack.push_back(now + self.window);
     }
 
     fn is_equal(&self, max: u32, window: Duration) -> bool {
@@ -41,11 +44,11 @@ pub struct Rules {
 impl Default for Rules {
     fn default() -> Self {
         // a cautious start until the first response tells us the real limits
-        Rules {
+        Self {
             limiters: Mutex::new(vec![Limiter {
                 max: 1,
                 window: Duration::from_secs(5),
-                stack: vec![],
+                stack: VecDeque::new(),
             }]),
         }
     }
@@ -56,19 +59,21 @@ impl Rules {
     pub async fn wait(&self) {
         loop {
             let wait = {
-                let mut limiters = self.limiters.lock().unwrap();
+                let mut limiters = self.limiters.lock();
                 let now = Instant::now();
                 limiters.iter_mut().for_each(|l| l.prune(now));
                 let blocked = limiters
                     .iter()
                     .filter(|l| l.available() == 0)
-                    .filter_map(|l| l.stack.iter().min().map(|t| t.saturating_duration_since(now)))
+                    .filter_map(|l| l.stack.front().map(|t| t.saturating_duration_since(now)))
                     .max();
-                if blocked.is_none() {
+                let Some(wait) = blocked else {
                     limiters.iter_mut().for_each(|l| l.borrow(now));
+                    drop(limiters);
                     return;
-                }
-                blocked.unwrap()
+                };
+                drop(limiters);
+                wait
             };
             tokio::time::sleep(wait.max(Duration::from_millis(5))).await;
         }
@@ -77,42 +82,43 @@ impl Rules {
     /// `RateLimiter.estimateTime`: how long `count` requests would have to wait.
     pub fn estimate(&self, count: u32, ignore_state: bool) -> Duration {
         let now = Instant::now();
-        let limiters = self.limiters.lock().unwrap();
-        // times are relative to now, in seconds
-        let mut sim: Vec<(u32, f64, Vec<f64>)> = limiters
+        let limiters = self.limiters.lock();
+        // times are offsets from now; each stack is sorted because the window is fixed
+        let mut sim: Vec<(u32, Duration, VecDeque<Duration>)> = limiters
             .iter()
             .map(|l| {
-                let mut stack: Vec<f64> = if ignore_state {
-                    vec![]
+                let stack = if ignore_state {
+                    VecDeque::new()
                 } else {
-                    l.stack
-                        .iter()
-                        .map(|t| t.saturating_duration_since(now).as_secs_f64())
-                        .collect()
+                    l.stack.iter().map(|t| t.saturating_duration_since(now)).collect()
                 };
-                stack.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                (l.max, l.window.as_secs_f64(), stack)
+                (l.max, l.window, stack)
             })
             .collect();
+        drop(limiters);
 
-        let mut total = 0.0;
+        let full = |max: u32, stack: &VecDeque<Duration>| stack.len() >= max as usize;
+        let mut total = Duration::ZERO;
         for _ in 0..count {
-            while sim.iter().any(|(max, _, stack)| stack.len() as u32 >= *max) {
+            while sim.iter().any(|(max, _, stack)| full(*max, stack)) {
                 let wait = sim
                     .iter()
-                    .filter(|(max, _, stack)| stack.len() as u32 >= *max)
-                    .map(|(_, _, stack)| stack[0] - total)
-                    .fold(0.0, f64::max);
+                    .filter(|(max, _, stack)| full(*max, stack))
+                    .filter_map(|(_, _, stack)| stack.front().map(|t| t.saturating_sub(total)))
+                    .max()
+                    .unwrap_or(Duration::ZERO);
                 total += wait;
-                for (_, _, stack) in sim.iter_mut() {
-                    stack.retain(|t| *t > total);
+                for (_, _, stack) in &mut sim {
+                    while stack.front().is_some_and(|t| *t <= total) {
+                        stack.pop_front();
+                    }
                 }
             }
-            for (_, window, stack) in sim.iter_mut() {
-                stack.push(total + *window);
+            for (_, window, stack) in &mut sim {
+                stack.push_back(total + *window);
             }
         }
-        Duration::from_secs_f64(total.max(0.0))
+        total
     }
 
     /// `adjustRateLimits`: adopt the rules the server reported.
@@ -134,7 +140,7 @@ impl Rules {
             })
             .collect();
 
-        let mut limiters = self.limiters.lock().unwrap();
+        let mut limiters = self.limiters.lock();
         let now = Instant::now();
 
         // forget rules the server no longer has
@@ -146,7 +152,7 @@ impl Rules {
             let Some((_, _, state)) = server.iter().find(|(max, window, _)| l.is_equal(*max, *window)) else {
                 continue;
             };
-            let delta = *state as i64 - l.stack.len() as i64;
+            let delta = i64::from(*state) - i64::try_from(l.stack.len()).unwrap_or(i64::MAX);
             if delta > 0 {
                 // the server has seen more requests than we have: burst to match
                 for _ in 0..(delta as u32).min(l.available()) {
@@ -163,7 +169,7 @@ impl Rules {
             let mut l = Limiter {
                 max,
                 window,
-                stack: vec![],
+                stack: VecDeque::new(),
             };
             for _ in 0..state {
                 l.borrow(now);
@@ -200,7 +206,7 @@ pub fn prevent_queue_creation(targets: &[(&Rules, u32)]) -> Result<()> {
 #[cfg(test)]
 impl Rules {
     fn wait_sync_for_test(&self) {
-        let mut l = self.limiters.lock().unwrap();
+        let mut l = self.limiters.lock();
         let now = Instant::now();
         l.iter_mut().for_each(|x| x.borrow(now));
     }
@@ -215,7 +221,7 @@ mod tests {
             limiters: Mutex::new(vec![Limiter {
                 max,
                 window: Duration::from_secs(secs),
-                stack: vec![],
+                stack: VecDeque::new(),
             }]),
         }
     }
@@ -243,12 +249,13 @@ mod tests {
     fn adopts_server_rules() {
         let r = Rules::default();
         r.adjust("5:5:10,15:15:60", "2:5:0,2:15:0", Duration::from_secs(2));
-        let l = r.limiters.lock().unwrap();
+        let l = r.limiters.lock();
         assert_eq!(l.len(), 2);
         assert!(l
             .iter()
             .any(|l| l.is_equal(5, Duration::from_secs(7)) && l.stack.len() == 2));
         assert!(l.iter().any(|l| l.is_equal(15, Duration::from_secs(17))));
+        drop(l);
     }
 
     #[test]

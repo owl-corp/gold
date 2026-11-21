@@ -1,8 +1,10 @@
 //! Modifier types and per-stat totals.
 use super::advanced::{apply_incr, ParsedModifier};
 use super::stat_translations::ParsedStat;
+use super::{ParseError, Result};
 use crate::data::{Stat, StatMatcher};
 use serde::Serialize;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -21,18 +23,19 @@ pub enum ModifierType {
 
 impl ModifierType {
     /// The key used in a stat's `trade.ids`.
-    pub fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
-            ModifierType::Pseudo => "pseudo",
-            ModifierType::Explicit => "explicit",
-            ModifierType::Implicit => "implicit",
-            ModifierType::Crafted => "crafted",
-            ModifierType::Enchant => "enchant",
-            ModifierType::Scourge => "scourge",
-            ModifierType::Necropolis => "necropolis",
-            ModifierType::Veiled => "veiled",
-            ModifierType::Fractured => "fractured",
-            ModifierType::Imbued => "imbued",
+            Self::Pseudo => "pseudo",
+            Self::Explicit => "explicit",
+            Self::Implicit => "implicit",
+            Self::Crafted => "crafted",
+            Self::Enchant => "enchant",
+            Self::Scourge => "scourge",
+            Self::Necropolis => "necropolis",
+            Self::Veiled => "veiled",
+            Self::Fractured => "fractured",
+            Self::Imbued => "imbued",
         }
     }
 }
@@ -74,24 +77,25 @@ pub enum ModifierMechanic {
 }
 
 impl ModifierMechanic {
-    pub fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
-            ModifierMechanic::Synthesised => "synthesised",
-            ModifierMechanic::Corruption => "corrupted",
-            ModifierMechanic::Eldritch => "eldritch",
-            ModifierMechanic::Foulborn => "foulborn",
-            ModifierMechanic::Vestigial => "vestigial",
-            ModifierMechanic::Shaper => "explicit-shaper",
-            ModifierMechanic::Elder => "explicit-elder",
-            ModifierMechanic::Crusader => "explicit-crusader",
-            ModifierMechanic::Hunter => "explicit-hunter",
-            ModifierMechanic::Redeemer => "explicit-redeemer",
-            ModifierMechanic::Warlord => "explicit-warlord",
-            ModifierMechanic::Delve => "explicit-delve",
-            ModifierMechanic::Unveiled => "explicit-veiled",
-            ModifierMechanic::Incursion => "explicit-incursion",
-            ModifierMechanic::Infamous => "explicit-infamous",
-            ModifierMechanic::Essence => "explicit-essence",
+            Self::Synthesised => "synthesised",
+            Self::Corruption => "corrupted",
+            Self::Eldritch => "eldritch",
+            Self::Foulborn => "foulborn",
+            Self::Vestigial => "vestigial",
+            Self::Shaper => "explicit-shaper",
+            Self::Elder => "explicit-elder",
+            Self::Crusader => "explicit-crusader",
+            Self::Hunter => "explicit-hunter",
+            Self::Redeemer => "explicit-redeemer",
+            Self::Warlord => "explicit-warlord",
+            Self::Delve => "explicit-delve",
+            Self::Unveiled => "explicit-veiled",
+            Self::Incursion => "explicit-incursion",
+            Self::Infamous => "explicit-infamous",
+            Self::Essence => "explicit-essence",
         }
     }
 }
@@ -113,12 +117,13 @@ pub struct StatSource {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct StatCalculated {
-    pub stat: Stat,
+    pub stat: Arc<Stat>,
     #[serde(rename = "type")]
     pub type_: ModifierType,
     pub sources: Vec<StatSource>,
 }
 
+#[must_use]
 pub fn sum_stats_by_mod_type(mods: &[ParsedModifier]) -> Vec<StatCalculated> {
     let mut out: Vec<StatCalculated> = Vec::new();
 
@@ -168,6 +173,7 @@ pub enum SumMode {
     Max,
 }
 
+#[must_use]
 pub fn stat_sources_total(sources: &[StatSource], mode: SumMode) -> Option<StatRoll> {
     if sources.iter().all(|s| s.contributes.is_none()) {
         return None;
@@ -177,8 +183,8 @@ pub fn stat_sources_total(sources: &[StatSource], mode: SumMode) -> Option<StatR
         SumMode::Sum => a + b,
         SumMode::Max => crate::js::max(a, b),
     };
-    if sources.len() == 1 {
-        return sources[0].contributes;
+    if let [only] = sources {
+        return only.contributes;
     }
     let mut sum = StatRoll::default();
     for source in sources {
@@ -201,14 +207,18 @@ pub struct Translation {
     pub dp: Option<bool>,
 }
 
-pub fn translate_stat_with_roll(calc: &StatCalculated, roll: Option<StatRoll>) -> anyhow::Result<Translation> {
+pub fn translate_stat_with_roll(calc: &StatCalculated, roll: Option<StatRoll>) -> Result<Translation> {
     let matchers = &calc.stat.matchers;
     let translation: &StatMatcher = match roll {
-        None => matchers.iter().find(|m| m.value.is_none()).unwrap_or(&matchers[0]),
+        None => matchers
+            .iter()
+            .find(|m| m.value.is_none())
+            .or_else(|| matchers.first())
+            .ok_or_else(|| ParseError::parse("no matchers"))?,
         Some(roll) => {
             let mut t = matchers.iter().find(|m| m.value == Some(roll.value));
             if t.is_none() {
-                let same_sign = crate::js::sign(roll.min) == crate::js::sign(roll.max);
+                let same_sign = crate::js::eq(crate::js::sign(roll.min), crate::js::sign(roll.max));
                 t = if same_sign {
                     matchers
                         .iter()
@@ -222,7 +232,7 @@ pub fn translate_stat_with_roll(calc: &StatCalculated, roll: Option<StatRoll>) -
             if t.is_none() {
                 t = matchers.iter().find(|m| m.value.is_none());
             }
-            t.ok_or_else(|| anyhow::anyhow!("never"))?
+            t.ok_or_else(|| ParseError::parse("never"))?
         }
     };
 

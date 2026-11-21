@@ -2,8 +2,8 @@
 //! lines.
 use super::modifiers::{ModifierMechanic, ModifierType};
 use super::stat_translations::ParsedStat;
+use super::{ParseError, Result};
 use crate::client_strings::ClientStrings;
-use anyhow::{anyhow, bail, Result};
 use serde::Serialize;
 
 pub const SCOURGE_LINE: &str = " (scourge)";
@@ -44,8 +44,9 @@ pub struct ModifierInfo {
 }
 
 impl ModifierInfo {
-    pub fn new(type_: ModifierType) -> Self {
-        ModifierInfo {
+    #[must_use]
+    pub const fn new(type_: ModifierType) -> Self {
+        Self {
             type_,
             generation: None,
             mechanic: None,
@@ -60,12 +61,7 @@ impl ModifierInfo {
 
 /// `Number(x) || undefined`
 fn number_or_none(x: Option<&str>) -> Option<f64> {
-    let n = crate::js::number(x.unwrap_or("undefined"));
-    if n.is_nan() || n == 0.0 {
-        None
-    } else {
-        Some(n)
-    }
+    x.map(crate::js::number).filter(|n| !n.is_nan() && *n != 0.0)
 }
 
 pub fn parse_mod_info_line(cs: &ClientStrings, line: &str) -> Result<ModifierInfo> {
@@ -106,7 +102,7 @@ pub fn parse_mod_info_line(cs: &ClientStrings, line: &str) -> Result<ModifierInf
         let m = cs
             .MODIFIER_LINE
             .captures(mod_text)
-            .ok_or_else(|| anyhow!("Invalid regex for mod info line"))?;
+            .ok_or_else(|| ParseError::parse("Invalid regex for mod info line"))?;
         let kind = &m["type"];
 
         if [&cs.IMPLICIT_MODIFIER, &cs.CORRUPTED_IMPLICIT, &cs.VESTIGIAL_IMPLICIT]
@@ -162,7 +158,7 @@ pub fn parse_mod_info_line(cs: &ClientStrings, line: &str) -> Result<ModifierInf
             let m = cs
                 .MODIFIER_INCREASED
                 .captures(t)
-                .ok_or_else(|| anyhow!("modifier roll increase does not match"))?;
+                .ok_or_else(|| ParseError::parse("modifier roll increase does not match"))?;
             Some(crate::js::number(&m[1]))
         }
         _ => None,
@@ -171,6 +167,7 @@ pub fn parse_mod_info_line(cs: &ClientStrings, line: &str) -> Result<ModifierInf
     Ok(info)
 }
 
+#[must_use]
 pub fn is_mod_info_line(line: &str) -> bool {
     line.starts_with('{') && line.ends_with('}')
 }
@@ -180,25 +177,26 @@ pub struct GroupedModLines {
     pub stat_lines: Vec<String>,
 }
 
-pub fn group_lines_by_mod(lines: &[String]) -> Vec<GroupedModLines> {
+#[must_use]
+pub fn group_lines_by_mod(lines: &[&str]) -> Vec<GroupedModLines> {
     let mut out: Vec<GroupedModLines> = Vec::new();
-    if lines.is_empty() || !is_mod_info_line(&lines[0]) {
+    if !lines.first().is_some_and(|l| is_mod_info_line(l)) {
         return out;
     }
     for line in lines {
         if is_mod_info_line(line) {
             out.push(GroupedModLines {
-                mod_line: line.clone(),
+                mod_line: (*line).to_string(),
                 stat_lines: vec![],
             });
         } else if let Some(last) = out.last_mut() {
-            last.stat_lines.push(line.clone());
+            last.stat_lines.push((*line).to_string());
         }
     }
     out
 }
 
-pub fn parse_mod_type(lines: &[String]) -> Result<(ModifierType, Vec<String>)> {
+pub fn parse_mod_type(lines: &[&str]) -> Result<(ModifierType, Vec<String>)> {
     let ends = |suffix: &str| lines.iter().any(|l| l.ends_with(suffix));
     let strip = |suffix: &str| -> Vec<String> {
         lines
@@ -213,13 +211,16 @@ pub fn parse_mod_type(lines: &[String]) -> Result<(ModifierType, Vec<String>)> {
     } else if ends(IMPLICIT_LINE) {
         Ok((ModifierType::Implicit, strip(IMPLICIT_LINE)))
     } else {
-        bail!("Expected to be used only on lines that have modifier type")
+        Err(ParseError::parse(
+            "Expected to be used only on lines that have modifier type",
+        ))
     }
 }
 
 /// Stat values are stored as hundredths, so rolls with decimals are scaled by 2 decimal places.
 const DIV_BY_100: i32 = 2;
 
+#[must_use]
 pub fn apply_incr(info: &ModifierInfo, parsed: &ParsedStat) -> Option<ParsedStat> {
     let incr = info.roll_incr?;
     let roll = parsed.roll.as_ref()?;
@@ -239,6 +240,7 @@ pub fn apply_incr(info: &ModifierInfo, parsed: &ParsedStat) -> Option<ParsedStat
     })
 }
 
+#[must_use]
 pub fn incr_roll(value: f64, p: f64, dp: i32) -> f64 {
     let res = value + (value * p / 100.0);
     let rounding = 10f64.powi(dp);

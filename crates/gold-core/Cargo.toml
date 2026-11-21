@@ -6,15 +6,19 @@ license = "MIT"
 description = "Item parser, stat matching and trade logic"
 
 [dependencies]
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+time = { version = "0.3", default-features = false, features = ["std", "parsing"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip", "cookies"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
 unicode-normalization = "0.1"
 anyhow = "1"
-fancy-regex = "0.14"
+parking_lot = "0.12"
+thiserror = "2"
 regex = "1"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros", "rt"] }
+
+[lints]
+workspace = true
