@@ -255,6 +255,7 @@
  ],
  "FOIL_UNIQUE": "Foil Unique",
  "UNMODIFIABLE": "Unmodifiable",
+ "TWICE_CORRUPTED": "Twice Corrupted",
  "FOULBORN_NAME": {
   "re": "^Foulborn (.*)$",
   "flags": ""

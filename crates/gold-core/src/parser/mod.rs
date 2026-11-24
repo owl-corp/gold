@@ -647,7 +647,7 @@ fn parse_influence(d: &GameData, section: &[&str], item: &mut ParsedItem) -> Sec
 }
 
 fn parse_corrupted(d: &GameData, section: &[&str], item: &mut ParsedItem) -> SectionResult {
-    if first_is(section, &d.cs.CORRUPTED) {
+    if first_is(section, &d.cs.CORRUPTED) || first_is(section, &d.cs.TWICE_CORRUPTED) {
         item.status.is_corrupted = true;
         return Parsed;
     } else if first_is(section, &d.cs.UNMODIFIABLE) {
