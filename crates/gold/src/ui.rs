@@ -52,11 +52,14 @@ pub enum Action {
     },
 }
 
-/// The trade filters the overlay can flip.
-#[derive(Clone, Copy, Debug, Deserialize)]
+/// The trade filters the overlay can flip. The view sends the key with each toggle; the overlay returns it.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TradeKey {
     MagicOnly,
+    ItemLevel,
+    /// The nth influence filter of the item.
+    Influence(usize),
 }
 
 impl Action {

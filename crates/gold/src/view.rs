@@ -1,6 +1,7 @@
 //! What the overlay shows. The QML renders this JSON as it is and keeps no state.
 //! The structs below are that contract: field names are what `GoldOverlay.qml` reads.
 use crate::session::{Row, SearchState, Session};
+use crate::ui::TradeKey;
 use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::price_check::details::{get_details_id, is_valuable_basetype, DetailsId};
 use gold_core::price_check::filters::util::round_roll;
@@ -135,7 +136,15 @@ pub struct FilterView {
 #[serde(rename_all = "camelCase")]
 pub struct TradeFiltersView {
     currency: Option<String>,
-    magic_only: Option<bool>,
+    toggles: Vec<TradeToggle>,
+}
+
+/// An item-level filter the overlay can switch on or off.
+#[derive(Debug, Serialize)]
+pub struct TradeToggle {
+    key: TradeKey,
+    text: String,
+    on: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -203,15 +212,36 @@ pub fn render(s: &Session) -> View {
         p.stats.iter().filter(|f| f.hidden.is_some() && f.disabled).count()
     });
     let trade_filters = s.preset().map(|p| {
-        let magic_only = p
-            .filters
-            .rarity
-            .as_ref()
-            .filter(|r| r.value == "magic")
-            .map(|r| !r.disabled);
+        let f = &p.filters;
+        let mut toggles = Vec::new();
+        if let Some(r) = f.rarity.as_ref().filter(|r| r.value == "magic") {
+            toggles.push(TradeToggle {
+                key: TradeKey::MagicOnly,
+                text: "magic only".into(),
+                on: !r.disabled,
+            });
+        }
+        if let Some(l) = &f.item_level {
+            let text = l.max.filter(|m| *m != 0).map_or_else(
+                || format!("ilvl ≥ {}", l.value),
+                |max| format!("ilvl {}–{max}", l.value),
+            );
+            toggles.push(TradeToggle {
+                key: TradeKey::ItemLevel,
+                text,
+                on: !l.disabled,
+            });
+        }
+        for (i, inf) in f.influences.iter().flatten().enumerate() {
+            toggles.push(TradeToggle {
+                key: TradeKey::Influence(i),
+                text: format!("{:?} influence", inf.value),
+                on: !inf.disabled,
+            });
+        }
         TradeFiltersView {
-            currency: p.filters.trade.currency.clone(),
-            magic_only,
+            currency: f.trade.currency.clone(),
+            toggles,
         }
     });
 

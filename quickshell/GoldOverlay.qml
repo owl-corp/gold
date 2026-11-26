@@ -442,13 +442,7 @@ Scope {
                         spacing: 10
 
                         Repeater {
-                            model: {
-                                const t = root.view?.tradeFilters;
-                                if (!t) return [];
-                                return [
-                                    ...(t.magicOnly != null ? [{ key: "magicOnly", text: "magic only", on: t.magicOnly }] : []),
-                                ];
-                            }
+                            model: root.view?.tradeFilters?.toggles ?? []
 
                             StyledText {
                                 required property var modelData

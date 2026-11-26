@@ -213,6 +213,13 @@ fn apply_trade_filter(f: &mut ItemFilters, key: TradeKey) -> bool {
             }
             _ => false,
         },
+        TradeKey::ItemLevel => f.item_level.as_mut().map(|l| l.disabled = !l.disabled).is_some(),
+        TradeKey::Influence(i) => f
+            .influences
+            .as_mut()
+            .and_then(|v| v.get_mut(i))
+            .map(|inf| inf.disabled = !inf.disabled)
+            .is_some(),
     }
 }
 
