@@ -272,6 +272,17 @@ impl ItemDb {
         self.find(&self.by_name, ns, name, false)
     }
 
+    /// Every unique built on the base `base_ref`, one record per name, in data order.
+    #[must_use]
+    pub fn uniques_of_base(&self, base_ref: &str) -> Vec<&BaseType> {
+        let mut seen = HashSet::new();
+        self.items
+            .iter()
+            .filter(|i| i.namespace == "UNIQUE" && i.unique.as_ref().is_some_and(|u| u.base == base_ref))
+            .filter(|i| seen.insert(i.ref_name.as_str()))
+            .collect()
+    }
+
     /// `ITEM_BY_REF`
     #[must_use]
     pub fn by_ref(&self, ns: &str, ref_name: &str) -> Option<Vec<&BaseType>> {

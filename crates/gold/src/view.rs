@@ -57,8 +57,16 @@ pub struct SessionView {
     search_quality: Option<i64>,
     trade: TradeView,
     lines: Vec<String>,
+    /// Names to choose from when the item is an unidentified unique.
+    candidates: Vec<Candidate>,
     #[serde(flatten)]
     place: Placement,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Candidate {
+    name: String,
+    icon: String,
 }
 
 /// The poe.ninja price: either a `status` message or the amount with its extras.
@@ -292,8 +300,19 @@ pub fn render(s: &Session) -> View {
             .cloned()
             .chain(item.unknown_modifiers.iter().map(|m| format!("? {}", m.text)))
             .collect(),
+        candidates: candidate_views(s),
         place: s.place.clone(),
     }))
+}
+
+fn candidate_views(s: &Session) -> Vec<Candidate> {
+    s.candidates
+        .iter()
+        .map(|c| Candidate {
+            name: c.name.clone(),
+            icon: c.icon.clone(),
+        })
+        .collect()
 }
 
 /// The stat filter rows of the active preset.
@@ -562,6 +581,7 @@ mod tests {
             note: None,
             show_hidden: false,
             fetching_more: false,
+            candidates: vec![],
         });
         serde_json::to_value(view).unwrap()
     }
@@ -610,6 +630,7 @@ mod tests {
             note: None,
             show_hidden: false,
             fetching_more: false,
+            candidates: vec![],
         }))
         .unwrap();
 

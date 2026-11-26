@@ -50,6 +50,11 @@ pub enum Action {
         epoch: u64,
         key: TradeKey,
     },
+    /// Which unique an unidentified item is.
+    Pick {
+        epoch: u64,
+        index: usize,
+    },
 }
 
 /// The trade filters the overlay can flip. The view sends the key with each toggle; the overlay returns it.
@@ -74,7 +79,8 @@ impl Action {
             | Self::Search { epoch }
             | Self::Hidden { epoch }
             | Self::More { epoch }
-            | Self::Trade { epoch, .. } => Some(*epoch),
+            | Self::Trade { epoch, .. }
+            | Self::Pick { epoch, .. } => Some(*epoch),
         }
     }
 }

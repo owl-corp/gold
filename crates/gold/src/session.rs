@@ -1,6 +1,7 @@
 //! One price check: the item, its filters, and the state of its searches.
 //! The overlay only renders `view::render(session)` and sends actions back.
 use crate::view::Placement;
+use gold_core::data::BaseType;
 use gold_core::parser::item::ParsedItem;
 use gold_core::price_check::filters::presets::FilterPreset;
 use gold_core::price_check::ninja::NinjaDb;
@@ -53,6 +54,8 @@ pub struct Session {
     pub show_hidden: bool,
     /// A "show more" fetch is running.
     pub fetching_more: bool,
+    /// An unidentified unique: the uniques of its base, until the user says which one it is.
+    pub candidates: Vec<BaseType>,
 }
 
 impl Session {

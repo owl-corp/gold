@@ -294,6 +294,47 @@ Scope {
                         StyledText { required property string modelData; text: modelData; color: Theme.textDim }
                     }
 
+                    // an unidentified unique: which one is it? Only the uniques of its base are listed
+                    StyledText {
+                        visible: (root.view?.candidates?.length ?? 0) > 0
+                        text: "Which unique is it?"
+                        color: Theme.textDim
+                    }
+                    Repeater {
+                        model: root.view?.candidates ?? []
+
+                        RowLayout {
+                            id: candidate
+
+                            required property var modelData
+                            required property int index
+
+                            spacing: 8
+
+                            Image {
+                                source: candidate.modelData.icon
+                                sourceSize.height: 48
+                                fillMode: Image.PreserveAspectFit
+                                Layout.preferredHeight: 48
+                                Layout.preferredWidth: 48
+                                asynchronous: true
+                            }
+                            StyledText {
+                                text: candidate.modelData.name
+                                color: Theme.blue
+                                font.underline: pickHit.containsMouse
+                            }
+                            MouseArea {
+                                id: pickHit
+
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: { panel.forceActiveFocus(); root.send({ type: "pick", index: candidate.index }); }
+                            }
+                        }
+                    }
+
                     // presets: similar items / exact / bulk ...
                     RowLayout {
                         visible: (root.view?.presets?.length ?? 0) > 1

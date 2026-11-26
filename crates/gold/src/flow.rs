@@ -5,6 +5,7 @@ use crate::ui::{Action, TradeKey, Ui};
 use crate::view::{self, Placement, View};
 use crate::{clipboard, hypr, search};
 use anyhow::{bail, Result};
+use gold_core::data::BaseType;
 use gold_core::parser::item::{ItemRarity, ParsedItem};
 use gold_core::parser::meta::{known, ItemCategory};
 use gold_core::parser::parse_clipboard;
@@ -52,6 +53,76 @@ pub fn closed_by_overlay(app: &App) {
     app.next_epoch();
 }
 
+/// The filter presets for an item, the active one, and why there are none.
+async fn build_presets(app: &App, item: &ParsedItem) -> (Vec<FilterPreset>, usize, Option<String>) {
+    let (presets, active, note) = match app.league().await {
+        Err(e) => (vec![], 0, Some(format!("No league: {e:#}"))),
+        Ok(league) => {
+            let opts = app.preset_options(league);
+            match create_presets(&app.data, item, &opts) {
+                Ok(p) => {
+                    let active = p.presets.iter().position(|x| x.id == p.active).unwrap_or(0);
+                    (p.presets, active, None)
+                }
+                Err(e) if e.is::<Unsupported>() => (vec![], 0, Some(e.to_string())),
+                Err(e) => (vec![], 0, Some(format!("Can't build a search: {e:#}"))),
+            }
+        }
+    };
+    // Currency-exchange items are priced by poe.ninja only: no presets means no search at all.
+    if item.info.exchangeable == Some(true) {
+        (vec![], 0, note)
+    } else {
+        (presets, active, note)
+    }
+}
+
+/// The item as the given unique, built on the base it is now.
+fn with_unique(item: &ParsedItem, unique: &BaseType) -> ParsedItem {
+    let mut item = item.clone();
+    item.unique_base = Some(std::mem::replace(&mut item.info, unique.clone()));
+    item
+}
+
+/// The user named the unique an unidentified item is: search for that one.
+fn pick(app: &Arc<App>, ui: &Ui, epoch: u64, index: usize) {
+    let item = {
+        let guard = app.session.lock();
+        let Some(s) = guard.as_ref().filter(|s| s.epoch == epoch) else {
+            return;
+        };
+        let Some(chosen) = s.candidates.get(index) else { return };
+        let item = with_unique(&s.item, chosen);
+        drop(guard);
+        item
+    };
+    let (app, ui) = (app.clone(), ui.clone());
+    tokio::spawn(async move {
+        let (presets, active, note) = build_presets(&app, &item).await;
+        let auto = presets.get(active).is_some_and(|p| search_on_open(&item, p));
+        let applied = update(&app, epoch, |s| {
+            // a second click while the presets were being built wins only once
+            if s.candidates.is_empty() {
+                return false;
+            }
+            s.candidates.clear();
+            s.item = item;
+            s.presets = presets;
+            s.active = active;
+            s.note = note;
+            s.search = SearchState::Idle;
+            s.search_gen += 1;
+            true
+        });
+        if applied == Some(true) {
+            show(&app, &ui, epoch);
+            if auto {
+                start_search(&app, &ui, epoch);
+            }
+        }
+    });
+}
+
 pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
     if ui.clients() == 0 {
         bail!("no overlay connected (is the Quickshell overlay running?)");
@@ -91,26 +162,26 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
         }
     };
 
-    let (presets, active, note) = match app.league().await {
-        Err(e) => (vec![], 0, Some(format!("No league: {e:#}"))),
-        Ok(league) => {
-            let opts = app.preset_options(league);
-            match create_presets(&app.data, &item, &opts) {
-                Ok(p) => {
-                    let active = p.presets.iter().position(|x| x.id == p.active).unwrap_or(0);
-                    (p.presets, active, None)
-                }
-                Err(e) if e.is::<Unsupported>() => (vec![], 0, Some(e.to_string())),
-                Err(e) => (vec![], 0, Some(format!("Can't build a search: {e:#}"))),
-            }
-        }
-    };
-
-    // Currency-exchange items are priced by poe.ninja only: no presets means no search at all.
-    let (presets, active) = if item.info.exchangeable == Some(true) {
-        (vec![], 0)
+    // An unidentified unique is searched only once the user says which unique it is.
+    let candidates: Vec<_> = if item.rarity == Some(ItemRarity::Unique) && item.status.is_unidentified {
+        app.data
+            .items
+            .uniques_of_base(&item.info.ref_name)
+            .into_iter()
+            .cloned()
+            .collect()
     } else {
-        (presets, active)
+        vec![]
+    };
+    // a base with one unique needs no question
+    let (item, candidates) = match candidates.as_slice() {
+        [only] => (with_unique(&item, only), vec![]),
+        _ => (item, candidates),
+    };
+    let (presets, active, note) = if candidates.is_empty() {
+        Box::pin(build_presets(app, &item)).await
+    } else {
+        (vec![], 0, None)
     };
     let auto = presets.get(active).is_some_and(|p| search_on_open(&item, p));
     {
@@ -131,6 +202,7 @@ pub async fn price_check(app: &Arc<App>, ui: &Ui) -> Result<()> {
             note,
             show_hidden: false,
             fetching_more: false,
+            candidates,
         });
     }
     show(app, ui, epoch);
@@ -335,6 +407,7 @@ pub fn handle_action(app: &Arc<App>, ui: &Ui, action: &Action) {
             show(app, ui, epoch);
         }
         Action::More { .. } => more(app, ui, epoch),
+        Action::Pick { index, .. } => pick(app, ui, epoch, *index),
         Action::Trade { key, .. } => {
             // a changed trade filter re-runs the search, if the user had run one
             let rerun = update(app, epoch, |s| {
@@ -390,5 +463,19 @@ mod tests {
         assert!(auto_searches(currency));
         assert!(auto_searches(unique));
         assert!(!auto_searches(rare));
+    }
+
+    #[test]
+    fn unidentified_unique_candidates_share_its_base() {
+        let data = data();
+        let text =
+            "Item Class: Belts\nRarity: Unique\nLeather Belt\n--------\nItem Level: 84\n--------\nUnidentified\n";
+        let item = parse_clipboard(&data, text).unwrap();
+        assert!(item.status.is_unidentified);
+        let found = data.items.uniques_of_base(&item.info.ref_name);
+        assert!(found.iter().any(|u| u.ref_name == "Headhunter"));
+        assert!(found
+            .iter()
+            .all(|u| u.unique.as_ref().is_some_and(|u| u.base == "Leather Belt")));
     }
 }
