@@ -58,6 +58,8 @@ pub enum Action {
 pub enum TradeKey {
     MagicOnly,
     ItemLevel,
+    /// Search the whole item category (any boots) instead of this exact base (Fugitive Boots).
+    AnyBase,
     /// The nth influence filter of the item.
     Influence(usize),
 }

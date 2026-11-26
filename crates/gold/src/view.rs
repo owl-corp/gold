@@ -214,6 +214,14 @@ pub fn render(s: &Session) -> View {
     let trade_filters = s.preset().map(|p| {
         let f = &p.filters;
         let mut toggles = Vec::new();
+        if let Some(r) = f.search_relaxed.as_ref().filter(|r| r.sub.is_none()) {
+            let any = r.disabled != Some(true);
+            toggles.push(TradeToggle {
+                key: TradeKey::AnyBase,
+                text: if any { "any base" } else { "this base only" }.into(),
+                on: any,
+            });
+        }
         if let Some(r) = f.rarity.as_ref().filter(|r| r.value == "magic") {
             toggles.push(TradeToggle {
                 key: TradeKey::MagicOnly,

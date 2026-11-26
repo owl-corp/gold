@@ -214,6 +214,11 @@ fn apply_trade_filter(f: &mut ItemFilters, key: TradeKey) -> bool {
             _ => false,
         },
         TradeKey::ItemLevel => f.item_level.as_mut().map(|l| l.disabled = !l.disabled).is_some(),
+        TradeKey::AnyBase => f
+            .search_relaxed
+            .as_mut()
+            .map(|r| r.disabled = Some(r.disabled != Some(true)))
+            .is_some(),
         TradeKey::Influence(i) => f
             .influences
             .as_mut()
