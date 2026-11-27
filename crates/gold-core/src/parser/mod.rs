@@ -167,7 +167,10 @@ pub fn parse_clipboard(data: &GameData, clipboard: &str) -> Result<ParsedItem> {
 }
 
 fn parse_clipboard_inner(d: &GameData, clipboard: &str) -> Result<ParsedItem> {
-    let mut texts = item_text_to_sections(clipboard);
+    // Newer game versions put a zero-width space before gem names in lines like
+    // "Supported by Level 1 \u{200b}Diminishment".
+    let stripped = clipboard.replace('\u{200b}', "");
+    let mut texts = item_text_to_sections(&stripped);
 
     if texts.first().and_then(|s| s.get(2)) == Some(&d.cs.CANNOT_USE_ITEM.as_str()) {
         if let Some(first) = texts.first_mut() {

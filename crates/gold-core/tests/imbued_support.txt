@@ -1,0 +1,35 @@
+Item Class: Skill Gems
+Rarity: Gem
+Steelskin
+--------
+Spell, Duration, Guard
+Level: 1
+Cost: 4 Mana
+Cooldown Time: 3.00 sec
+Cast Time: Instant
+Quality: +19% (augmented)
+--------
+Requirements:
+Level: 4
+Str: 16
+--------
+Applies a buff which can take some of the damage from hits for you before being depleted. Shares a cooldown with other Guard skills.
+--------
+Base duration is 1.50 seconds
+This Skill's Cooldown does not recover during its effect
+70% of Damage from Hits is taken from the Buff before Life or Energy Shield
+Buff can take 54 Damage
+Buff grants Immunity to Bleeding
+
+Additional Effects From Quality:
+9(0-10)% increased Cooldown Recovery Rate
+--------
+Experience: 1/841
+--------
+Supported by Level 1 ​Diminishment
+--------
+Place into an item socket to gain this skill. Right click to remove from a socket.
+--------
+Corrupted
+--------
+Imbued

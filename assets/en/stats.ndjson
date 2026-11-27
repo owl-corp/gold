@@ -7777,6 +7777,7 @@
 {"ref":"Supported by Level 1 Damage on Full Life","better":1,"matchers":[{"string":"Supported by Level 1 Damage on Full Life"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2721225790"]}}}
 {"ref":"Supported by Level 1 Deadly Ailments","better":1,"matchers":[{"string":"Supported by Level 1 Deadly Ailments"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3092222470"]}}}
 {"ref":"Supported by Level 1 Decay","better":1,"matchers":[{"string":"Supported by Level 1 Decay"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|4149556221"]}}}
+{"ref":"Supported by Level 1 Diminishment","better":1,"matchers":[{"string":"Supported by Level 1 Diminishment"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|1452519409"]}}}
 {"ref":"Supported by Level 1 Devour","better":1,"matchers":[{"string":"Supported by Level 1 Devour"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2451084442"]}}}
 {"ref":"Supported by Level 1 Efficacy","better":1,"matchers":[{"string":"Supported by Level 1 Efficacy"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|830701349"]}}}
 {"ref":"Supported by Level 1 Elemental Army","better":1,"matchers":[{"string":"Supported by Level 1 Elemental Army"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3849702703"]}}}
@@ -7889,6 +7890,18 @@
 {"ref":"Supported by Level 1 Volatility","better":1,"matchers":[{"string":"Supported by Level 1 Volatility"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|1677409971"]}}}
 {"ref":"Supported by Level 1 Volley","better":1,"matchers":[{"string":"Supported by Level 1 Volley"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|1041958248"]}}}
 {"ref":"Supported by Level 1 Withering Touch","better":1,"matchers":[{"string":"Supported by Level 1 Withering Touch"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|1337767102"]}}}
+{"ref":"Supported by Level 1 Cast when Damage Taken","better":1,"matchers":[{"string":"Supported by Level 1 Cast when Damage Taken"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2842604691"]}}}
+{"ref":"Supported by Level 1 Destitution","better":1,"matchers":[{"string":"Supported by Level 1 Destitution"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2208650143"]}}}
+{"ref":"Supported by Level 1 Lethargy","better":1,"matchers":[{"string":"Supported by Level 1 Lethargy"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3435483009"]}}}
+{"ref":"Supported by Level 1 Encumbrance","better":1,"matchers":[{"string":"Supported by Level 1 Encumbrance"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3989015253"]}}}
+{"ref":"Supported by Level 1 Constriction","better":1,"matchers":[{"string":"Supported by Level 1 Constriction"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2642139747"]}}}
+{"ref":"Supported by Level 1 Disempower","better":1,"matchers":[{"string":"Supported by Level 1 Disempower"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3192305202"]}}}
+{"ref":"Supported by Level 1 Nullification","better":1,"matchers":[{"string":"Supported by Level 1 Nullification"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|601991273"]}}}
+{"ref":"Supported by Level 1 Mediocrity","better":1,"matchers":[{"string":"Supported by Level 1 Mediocrity"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3186808105"]}}}
+{"ref":"Supported by Level 1 Taxation","better":1,"matchers":[{"string":"Supported by Level 1 Taxation"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2082748837"]}}}
+{"ref":"Supported by Level 1 Impotence","better":1,"matchers":[{"string":"Supported by Level 1 Impotence"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3674002686"]}}}
+{"ref":"Supported by Level 1 Poverty","better":1,"matchers":[{"string":"Supported by Level 1 Poverty"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|2327564307"]}}}
+{"ref":"Supported by Level 1 Penance","better":1,"matchers":[{"string":"Supported by Level 1 Penance"}],"trade":{"ids":{"imbued":["imbued.pseudo_built_in_support|3870057454"]}}}
 {"ref":"Supreme Decadence","better":1,"matchers":[{"string":"Supreme Decadence"}],"trade":{"ids":{"explicit":["explicit.stat_3215997147"]}}}
 {"ref":"Supreme Ego","better":1,"matchers":[{"string":"Supreme Ego"}],"trade":{"ids":{"explicit":["explicit.stat_1421267186"],"fractured":["fractured.stat_1421267186"]}}}
 {"ref":"Survival","better":1,"matchers":[{"string":"Survival"}],"trade":{"ids":{"explicit":["explicit.stat_2995661301"]}}}
