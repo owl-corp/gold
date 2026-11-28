@@ -387,6 +387,29 @@ fn fmt_price(rate: Option<f64>, chaos: f64, is_divine: bool) -> (String, &'stati
     }
 }
 
+/// Name prefixes and a suffix of the items ranked together with this one.
+fn same_set(id: &DetailsId) -> Option<(Vec<String>, &'static str)> {
+    if id.ns != "ITEM" {
+        return None;
+    }
+    for suffix in [" Delirium Orb", " Catalyst"] {
+        if id.name.ends_with(suffix) {
+            return Some((vec![String::new()], suffix));
+        }
+    }
+    // the tierless essences (Delirium, Horror, Hysteria, Insanity) are as dear as Deafening
+    let tier = match id.name.split_once(" Essence of ") {
+        Some((tier, _)) => tier,
+        None if id.name.starts_with("Essence of ") => "Deafening",
+        None => return None,
+    };
+    let mut prefixes = vec![format!("{tier} Essence of ")];
+    if tier == "Deafening" {
+        prefixes.push("Essence of ".to_string());
+    }
+    Some((prefixes, ""))
+}
+
 /// Related items, or else all of a small category, not only this item.
 fn price_groups(
     db: &NinjaDb,
@@ -416,6 +439,23 @@ fn price_groups(
             current,
         },
     };
+    // an essence is ranked against every essence of its tier, a Delirium Orb or Catalyst against all of its kind
+    if let Some((prefixes, suffix)) = same_set(id) {
+        if let Some(all) = db.section_prices(&id.ns, &id.name, id.variant.as_deref()) {
+            let mut rows: Vec<PriceRow> = all
+                .iter()
+                .filter(|p| prefixes.iter().any(|x| p.info.name.starts_with(x)) && p.info.name.ends_with(suffix))
+                .map(|p| {
+                    let current = p.info.name == found.info.name && p.info.variant == found.info.variant;
+                    row(p.info.name.clone(), Some((p.info.chaos, p.url.clone())), current)
+                })
+                .collect();
+            if rows.len() > 1 {
+                sort_by_price(&mut rows);
+                return Some(vec![PriceGroup { heading: None, rows }]);
+            }
+        }
+    }
     let curated = related::find_group(&id.ns, &id.name, id.variant.as_deref()).map(|g| {
         let rows = |ids: &[String], heading: &'static str| {
             let keys: Vec<_> = ids.iter().filter_map(|i| related::parse_key(i)).collect();
